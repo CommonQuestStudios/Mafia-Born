@@ -49,6 +49,92 @@ const ADMIN_ALLOWED_FIELDS = new Set([
     'power', 'reputation', 'heat', 'ammo', 'gas', 'skillPoints',
     'territory', 'dirtyMoney'
 ]);
+const ADMIN_MODIFY_ERROR = 'No valid modifications provided. Allowed fields: money, level, experience, health, power, reputation, heat, ammo, gas, skillPoints, territory, dirtyMoney';
+
+// Save-data guardrails
+const MAX_SAVE_DATA_BYTES = 1024 * 1024; // 1MB serialized save payload
+const MAX_SAVE_DATA_DEPTH = 20;
+
+function _isPlainObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function _computeDepth(value, depth = 0) {
+    if (depth > MAX_SAVE_DATA_DEPTH) return depth;
+    if (!_isPlainObject(value) && !Array.isArray(value)) return depth;
+
+    let maxDepth = depth;
+    const values = Array.isArray(value) ? value : Object.values(value);
+    for (const item of values) {
+        const childDepth = _computeDepth(item, depth + 1);
+        if (childDepth > maxDepth) maxDepth = childDepth;
+        if (maxDepth > MAX_SAVE_DATA_DEPTH) break;
+    }
+    return maxDepth;
+}
+
+function _toFiniteNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function _clampNumber(value, min, max, fallback = 0) {
+    const n = _toFiniteNumber(value, fallback);
+    return Math.min(max, Math.max(min, n));
+}
+
+function validateAndBuildSaveEntry(body) {
+    if (!_isPlainObject(body)) return { ok: false, error: 'Invalid save payload' };
+    if (!_isPlainObject(body.data) && !Array.isArray(body.data)) {
+        return { ok: false, error: 'Save data must be an object or array' };
+    }
+
+    let serialized = '';
+    try {
+        serialized = JSON.stringify(body.data);
+    } catch (_err) {
+        return { ok: false, error: 'Save data is not serializable JSON' };
+    }
+
+    if (!serialized || serialized.length === 0) return { ok: false, error: 'Save data required' };
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_SAVE_DATA_BYTES) {
+        return { ok: false, error: 'Save data exceeds 1MB limit' };
+    }
+
+    const depth = _computeDepth(body.data, 0);
+    if (depth > MAX_SAVE_DATA_DEPTH) {
+        return { ok: false, error: `Save data exceeds max depth of ${MAX_SAVE_DATA_DEPTH}` };
+    }
+
+    const saveEntry = {
+        playerName: String(body.playerName || 'Unknown').trim().slice(0, 30),
+        level: _clampNumber(body.level, 1, 1000, 1),
+        money: _clampNumber(body.money, 0, Number.MAX_SAFE_INTEGER, 0),
+        reputation: _clampNumber(body.reputation, 0, Number.MAX_SAFE_INTEGER, 0),
+        empireRating: _clampNumber(body.empireRating, 0, 1000000, 0),
+        playtime: String(body.playtime || '0:00').slice(0, 20),
+        saveDate: new Date().toISOString(),
+        gameVersion: String(body.gameVersion || '1.0.0').slice(0, 20),
+        data: body.data
+    };
+
+    return { ok: true, saveEntry };
+}
+
+function sanitizeAdminFieldValue(field, value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    switch (field) {
+        case 'health':
+        case 'heat':
+            return _clampNumber(value, 0, 100, 0);
+        case 'level':
+            return _clampNumber(value, 1, 1000, 1);
+        case 'territory':
+            return _clampNumber(value, 0, 1000000, 0);
+        default:
+            return _clampNumber(value, 0, Number.MAX_SAFE_INTEGER, 0);
+    }
+}
 
 // Server configuration
 const PORT = process.env.PORT || 3000;
@@ -202,17 +288,81 @@ const server = http.createServer(async (req, res) => {
                 if (!username) return json(401, { error: 'Not authenticated' });
                 if (!isAdmin(username)) return json(403, { error: 'Forbidden' });
                 const body = await readBody();
+                const rawMods = _isPlainObject(body?.modifications) ? body.modifications : body;
                 // Validate: only allow known safe fields with numeric values
                 const sanitized = {};
-                for (const [key, value] of Object.entries(body)) {
+                for (const [key, value] of Object.entries(rawMods || {})) {
                     if (!ADMIN_ALLOWED_FIELDS.has(key)) continue;
-                    if (typeof value !== 'number' || !isFinite(value)) continue;
-                    sanitized[key] = value;
+                    const safeValue = sanitizeAdminFieldValue(key, value);
+                    if (safeValue == null) continue;
+                    sanitized[key] = safeValue;
                 }
                 if (Object.keys(sanitized).length === 0) {
-                    return json(400, { error: 'No valid modifications provided. Allowed fields: ' + [...ADMIN_ALLOWED_FIELDS].join(', ') });
+                    return json(400, { error: ADMIN_MODIFY_ERROR });
                 }
-                return json(200, { ok: true, modifications: sanitized });
+
+                const targetId = typeof body?.targetPlayerId === 'string' ? body.targetPlayerId : null;
+                const targetName = typeof body?.targetPlayerName === 'string' ? body.targetPlayerName.trim() : null;
+
+                let appliedId = null;
+                let appliedPlayer = null;
+                if (targetId) {
+                    appliedPlayer = gameState.players.get(targetId) || null;
+                    if (appliedPlayer) appliedId = targetId;
+                }
+                if (!appliedPlayer && targetName) {
+                    for (const [id, p] of gameState.players.entries()) {
+                        if (p.name.toLowerCase() === targetName.toLowerCase()) {
+                            appliedPlayer = p;
+                            appliedId = id;
+                            break;
+                        }
+                    }
+                }
+
+                if (!appliedPlayer || !appliedId) {
+                    return json(404, { error: 'Target player not found online. Provide targetPlayerId or targetPlayerName.' });
+                }
+
+                const playerState = gameState.playerStates.get(appliedId);
+                const before = {};
+                const after = {};
+                for (const [field, nextValue] of Object.entries(sanitized)) {
+                    before[field] = appliedPlayer[field] !== undefined ? appliedPlayer[field] : (playerState ? playerState[field] : undefined);
+                    appliedPlayer[field] = nextValue;
+                    if (playerState && Object.prototype.hasOwnProperty.call(playerState, field)) {
+                        playerState[field] = nextValue;
+                        playerState.lastUpdate = Date.now();
+                    }
+                    after[field] = nextValue;
+                }
+
+                broadcastPlayerStates();
+                persistedLeaderboard = generateLeaderboard();
+                broadcastToAll({ type: 'player_ranked', leaderboard: persistedLeaderboard });
+                scheduleWorldSave();
+
+                try {
+                    const db = mongodb.getDb();
+                    await db.collection('admin_audit').insertOne({
+                        action: 'modify_player',
+                        adminUser: username,
+                        targetPlayerId: appliedId,
+                        targetPlayerName: appliedPlayer.name,
+                        changes: after,
+                        before,
+                        createdAt: new Date()
+                    });
+                } catch (auditErr) {
+                    console.warn('Admin audit log failed:', auditErr.message);
+                }
+
+                return json(200, {
+                    ok: true,
+                    targetPlayerId: appliedId,
+                    targetPlayerName: appliedPlayer.name,
+                    modifications: after
+                });
             }
 
             // ── POST /api/save ─────────────────────────────
@@ -220,19 +370,9 @@ const server = http.createServer(async (req, res) => {
                 const username = userDB.validateToken(getToken());
                 if (!username) return json(401, { error: 'Not authenticated' });
                 const body = await readBody();
-                if (!body || !body.data) return json(400, { error: 'Save data required' });
-                // Wrap with metadata
-                const saveEntry = {
-                    playerName: body.playerName || 'Unknown',
-                    level: body.level || 1,
-                    money: body.money || 0,
-                    reputation: body.reputation || 0,
-                    empireRating: body.empireRating || 0,
-                    playtime: body.playtime || '0:00',
-                    saveDate: new Date().toISOString(),
-                    gameVersion: body.gameVersion || '1.0.0',
-                    data: body.data
-                };
+                const validated = validateAndBuildSaveEntry(body);
+                if (!validated.ok) return json(400, { error: validated.error });
+                const { saveEntry } = validated;
                 await userDB.setUserSave(username, saveEntry);
                 return json(200, { ok: true, saveDate: saveEntry.saveDate });
             }
@@ -455,6 +595,8 @@ const wss = new WebSocket.Server({
 const HEARTBEAT_INTERVAL = 30000;
 const RATE_LIMIT_WINDOW = 5000; // 5 seconds
 const MAX_MESSAGES_PER_WINDOW = 5;
+const WS_BACKPRESSURE_SOFT_LIMIT = 512 * 1024; // 512KB
+const WS_BACKPRESSURE_HARD_LIMIT = 2 * 1024 * 1024; // 2MB
 const clientMessageHistory = new Map();
 const connectingUsers = new Set(); // Tracks users mid-connect to prevent race conditions
 
@@ -462,6 +604,16 @@ const connectingUsers = new Set(); // Tracks users mid-connect to prevent race c
 function safeSend(ws, data, isRaw) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         try {
+            if (typeof ws.bufferedAmount === 'number') {
+                if (ws.bufferedAmount > WS_BACKPRESSURE_HARD_LIMIT) {
+                    console.warn('Terminating slow client due to backpressure:', ws.bufferedAmount);
+                    try { ws.terminate(); } catch (_e) { /* ignore */ }
+                    return;
+                }
+                if (ws.bufferedAmount > WS_BACKPRESSURE_SOFT_LIMIT) {
+                    return; // Drop non-critical message under pressure
+                }
+            }
             ws.send(isRaw ? data : JSON.stringify(data));
         } catch (err) {
             console.error('WebSocket send error:', err.message);
@@ -469,12 +621,27 @@ function safeSend(ws, data, isRaw) {
     }
 }
 
-// Basic Profanity Filter (Expand as needed)
-const BAD_WORDS = ['admin', 'system', 'mod', 'moderator', 'fuck', 'shit', 'ass', 'bitch']; 
+// Basic profanity and reserved-name filter
+const RESERVED_PLAYER_NAMES = new Set(['admin', 'system', 'mod', 'moderator']);
+const BAD_WORDS = new Set(['fuck', 'shit', 'bitch']);
+
+function normalizeWordTokens(text) {
+    return String(text || '')
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[^a-z0-9_\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+}
+
+function isReservedName(name) {
+    const normalized = String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    return RESERVED_PLAYER_NAMES.has(normalized);
+}
 
 function isProfane(text) {
-    const lowerText = text.toLowerCase();
-    return BAD_WORDS.some(word => lowerText.includes(word));
+    const tokens = normalizeWordTokens(text);
+    return tokens.some(word => BAD_WORDS.has(word));
 }
 
 function checkRateLimit(clientId) {
@@ -890,7 +1057,7 @@ function sanitizePlayerName(raw) {
     // Enforce length
     if (name.length > 20) name = name.substring(0, 20);
     // Fallback if empty or profane (admins bypass the filter)
-    if (!name || (isProfane(name) && !ADMIN_USERNAMES.has(name.toLowerCase()))) {
+    if (!name || isReservedName(name) || (isProfane(name) && !ADMIN_USERNAMES.has(name.toLowerCase()))) {
         name = `Player_${Math.random().toString(36).slice(-4)}`;
     }
     return name;
@@ -1444,12 +1611,13 @@ function handlePlayerConnect(clientId, message, ws) {
     const player = {
         id: clientId,
         name: finalName,
-        money: message.playerStats?.money || 0,
-        reputation: message.playerStats?.reputation || 0,
-        territory: message.playerStats?.territory || 0,
-        currentTerritory: message.playerStats?.currentTerritory || null,
-        lastTerritoryMove: message.playerStats?.lastTerritoryMove || 0,
-        level: message.playerStats?.level || 1,
+        // Server-authoritative defaults: never trust client economy/progression values.
+        money: 0,
+        reputation: 0,
+        territory: 0,
+        currentTerritory: null,
+        lastTerritoryMove: 0,
+        level: 1,
         connectedAt: Date.now(),
         lastActive: Date.now()
     };
@@ -1465,10 +1633,10 @@ function handlePlayerConnect(clientId, message, ws) {
         level: player.level,
         territory: player.territory,
         currentTerritory: player.currentTerritory,
-        inJail: message.playerStats?.inJail || false,
-        jailTime: message.playerStats?.jailTime || 0,
-        health: message.playerStats?.health || 100,
-        heat: message.playerStats?.heat || 0,
+        inJail: false,
+        jailTime: 0,
+        health: 100,
+        heat: 0,
         lastUpdate: Date.now()
     };
     
@@ -2281,14 +2449,13 @@ function handlePlayerChallenge(clientId, message) {
 function handleHeistStart(clientId, message) {
     const heist = gameState.activeHeists.find(h => h.id === message.heistId);
     if (!heist) return;
-    
+
     // Only organizer can start
     if (heist.organizerId !== clientId) return;
-    
+
     // Must have minimum crew
     if (heist.participants.length < (heist.minCrew || 1)) return;
-    
-    console.log(` ${heist.organizer} launched heist: ${heist.target} with ${heist.participants.length} crew`);
+
     executeHeist(heist);
 }
 
@@ -2296,21 +2463,36 @@ function handleHeistStart(clientId, message) {
 function handleHeistLeave(clientId, message) {
     const heist = gameState.activeHeists.find(h => h.id === message.heistId);
     if (!heist) return;
-    
+
     // Organizer can't leave, they must cancel
     if (heist.organizerId === clientId) return;
-    
-    heist.participants = heist.participants.filter(pid => pid !== clientId);
-    
+
+    const participantIndex = heist.participants.indexOf(clientId);
+    if (participantIndex === -1) return;
+
+    heist.participants.splice(participantIndex, 1);
+    if (heist.roles) delete heist.roles[clientId];
+    if (heist.equipment) delete heist.equipment[clientId];
+
     const player = gameState.players.get(clientId);
     console.log(` ${player ? player.name : clientId} left heist: ${heist.target}`);
-    
+
     broadcastToAll({
         type: 'heist_update',
         heist: heist,
         action: 'player_left',
         playerName: player ? player.name : 'Unknown'
     });
+
+    // If everyone left, cancel the heist
+    if (heist.participants.length === 0) {
+        gameState.activeHeists = gameState.activeHeists.filter(h => h.id !== heist.id);
+        broadcastToAll({
+            type: 'heist_cancelled',
+            heistId: heist.id,
+            message: ` Heist on ${heist.target} was cancelled due to no participants.`
+        });
+    }
 }
 
 // Heist cancel handler (organizer only)
@@ -2503,12 +2685,6 @@ function handlePlayerUpdate(clientId, message) {
     const player = gameState.players.get(clientId);
     if (!player) return;
     
-    // Update basic player info
-    if (message.money !== undefined) player.money = message.money;
-    if (message.reputation !== undefined) player.reputation = message.reputation;
-    if (message.level !== undefined) player.level = message.level;
-    if (message.territory !== undefined) player.territory = message.territory;
-    
     // Allow name correction (e.g. Anonymous_xxx -> real name after game loads)
     if (message.playerName && message.playerName.trim() !== '' && !message.playerName.startsWith('Anonymous_')) {
         const newName = sanitizePlayerName(message.playerName);
@@ -2602,15 +2778,6 @@ function handlePlayerUpdate(clientId, message) {
     // Broadcast updated player states to all clients
     broadcastPlayerStates();
     
-    // Send updated leaderboard if reputation changed
-    if (message.reputation !== undefined) {
-        persistedLeaderboard = generateLeaderboard();
-        broadcastToAll({
-            type: 'player_ranked',
-            leaderboard: persistedLeaderboard
-        });
-        scheduleWorldSave();
-    }
 }
 
 // Handle jail status sync from client — server-authoritative: only accept going INTO jail

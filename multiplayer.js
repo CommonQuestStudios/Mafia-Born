@@ -131,6 +131,7 @@ let onlineWorldState = {
 
 // Territory income tracking
 let territoryIncomeNextCollection = Date.now() + (7 * 24 * 60 * 60 * 1000); // Next weekly collection
+const pendingHeistJoins = new Set();
 
 // Safe wrappers — game.js module may not be loaded when early WebSocket messages arrive
 const _safeUpdateUI = () => { if (typeof updateUI === 'function') updateUI(); };
@@ -878,21 +879,19 @@ function joinHeist(heistId, role) {
         window.ui.toast('You already joined this heist!', 'error');
         return;
     }
+
+    if (pendingHeistJoins.has(heistId)) {
+        window.ui.toast('Join request already sent. Waiting for server confirmation...', 'warning');
+        return;
+    }
     
     if (onlineWorldState.socket && onlineWorldState.socket.readyState === WebSocket.OPEN) {
         const msg = { type: 'heist_join', heistId: heistId, equipment: getEquipmentSummary() };
         if (role) msg.role = role;
         onlineWorldState.socket.send(JSON.stringify(msg));
+        pendingHeistJoins.add(heistId);
         _safeLogAction(`Requested to join heist: ${heist.target} as ${role || 'unassigned'}`);
-        
-        // Optimistic local update
-        if (Array.isArray(heist.participants)) {
-            heist.participants.push(onlineWorldState.playerId);
-        }
-        if (role) {
-            if (!heist.roles) heist.roles = {};
-            heist.roles[onlineWorldState.playerId] = role;
-        }
+        showMPToast('Join request sent. Waiting for server confirmation...', '#c0a040', 2200);
         showActiveHeists();
     } else {
         window.ui.toast('Not connected to the server!', 'error');
@@ -1871,6 +1870,11 @@ async function handleServerMessage(message) {
                 } else {
                     onlineWorldState.activeHeists.push(message.heist);
                 }
+
+                // Clear pending join once authoritative participant list includes this player
+                if (Array.isArray(message.heist.participants) && message.heist.participants.includes(onlineWorldState.playerId)) {
+                    pendingHeistJoins.delete(message.heist.id);
+                }
             }
             // Refresh heists screen if it's currently shown
             if (document.getElementById('multiplayer-content')?.dataset.activeScreen === 'heists') {
@@ -1882,6 +1886,7 @@ async function handleServerMessage(message) {
             // Heist was removed (cancelled or completed)
             if (message.heistId) {
                 onlineWorldState.activeHeists = onlineWorldState.activeHeists.filter(h => h.id !== message.heistId);
+                pendingHeistJoins.delete(message.heistId);
             }
             if (message.message) {
                 addWorldEvent(message.message);
@@ -1896,6 +1901,7 @@ async function handleServerMessage(message) {
             // Heist finished — show results
             if (message.heistId) {
                 onlineWorldState.activeHeists = onlineWorldState.activeHeists.filter(h => h.id !== message.heistId);
+                pendingHeistJoins.delete(message.heistId);
             }
             addWorldEvent(message.worldMessage || (message.success ? '\uD83D\uDCB0 A heist was successful!' : '\uD83D\uDE94 A heist has failed!'));
             // Show result popup if player was involved

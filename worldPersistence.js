@@ -13,6 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const WORLD_STATE_PATH = path.join(process.cwd(), 'world-state.json');
+const WORLD_STATE_TMP_PATH = `${WORLD_STATE_PATH}.tmp`;
+const WORLD_STATE_BAK_PATH = `${WORLD_STATE_PATH}.bak`;
 const SAVE_THROTTLE_MS = 5000; // Don't save more than once every 5 seconds
 
 const DEFAULT_STATE = {
@@ -66,10 +68,20 @@ function loadWorldState() {
 function saveWorldStateImmediate(state) {
   try {
     const data = JSON.stringify(state, null, 2);
-    fs.writeFileSync(WORLD_STATE_PATH, data, 'utf-8');
+    // Atomic pattern: write temp file first, then replace target.
+    fs.writeFileSync(WORLD_STATE_TMP_PATH, data, 'utf-8');
+    if (fs.existsSync(WORLD_STATE_PATH)) {
+      fs.copyFileSync(WORLD_STATE_PATH, WORLD_STATE_BAK_PATH);
+    }
+    fs.renameSync(WORLD_STATE_TMP_PATH, WORLD_STATE_PATH);
     console.log(' World state saved to world-state.json');
   } catch (err) {
     console.error(' Error saving world-state.json:', err.message);
+    try {
+      if (fs.existsSync(WORLD_STATE_TMP_PATH)) fs.unlinkSync(WORLD_STATE_TMP_PATH);
+    } catch (_cleanupErr) {
+      // ignore temp cleanup errors
+    }
   }
 }
 
