@@ -25643,13 +25643,23 @@ function startLoadingSequence() {
   function pingServer() {
     if (loadingFinished || connectionTimedOut) return;
     pingAttempts++;
-    fetch(SERVER_HEALTH_URL, { cache: 'no-store' })
+    fetch(SERVER_HEALTH_URL, { cache: 'no-store', mode: 'no-cors' })
       .then(res => {
+        if (res.type === 'opaque' || res.type === 'opaqueredirect') {
+          return { __opaque: true };
+        }
         if (res.ok) return res.json();
         throw new Error('Server returned ' + res.status);
       })
       .then(data => {
         if (connectionTimedOut) return; // Too late, already timed out
+        if (data && data.__opaque) {
+          sessionStorage.removeItem('mb_update_attempt');
+          serverReady = true;
+          window._offlineMode = false;
+          if (stepsComplete) finishLoading();
+          return;
+        }
         // -- Version mismatch check ---
         // Only auto-update if the SERVER version is strictly newer than the
         // client version. This avoids reload loops when the client runs
