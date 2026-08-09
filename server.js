@@ -144,17 +144,27 @@ const ALLOWED_ORIGINS = [
     'https://mafiaborn.com',
     'https://www.mafiaborn.com',
     'https://aaronc1992.github.io',
+    'https://commonqueststudios.github.io',
     'http://localhost:3000',
     'http://127.0.0.1:3000'
 ];
 
+function isAllowedOrigin(origin) {
+    if (!origin) return false;
+    const normalizedOrigin = origin.trim().toLowerCase();
+    if (ALLOWED_ORIGINS.includes(normalizedOrigin)) return true;
+    return normalizedOrigin.endsWith('.github.io') || normalizedOrigin.endsWith('.github.dev');
+}
+
 function getCorsHeaders(req) {
-    const origin = req.headers.origin || '*';
+    const origin = req.headers.origin || '';
+    const allowOrigin = origin && isAllowedOrigin(origin) ? origin : '*';
     const headers = {
-        'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
+        'Access-Control-Allow-Origin': allowOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Max-Age': '86400'
+        'Access-Control-Max-Age': '86400',
+        'Vary': 'Origin'
     };
     if (process.env.NODE_ENV === 'production') {
         headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
@@ -587,7 +597,7 @@ const wss = new WebSocket.Server({
         if (!origin || origin === 'null') {
             return process.env.NODE_ENV !== 'production';
         }
-        return ALLOWED_ORIGINS.some(allowed => origin === allowed || origin.startsWith(allowed + '/'));
+        return isAllowedOrigin(origin);
     }
 });
 
