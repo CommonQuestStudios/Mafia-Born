@@ -17726,49 +17726,82 @@ function updateCharacterPreview() {
   }
 }
 
+const PORTRAIT_OPTIONS = {
+  male: [
+    { file: 'profile_pics/White male.png', label: 'White Male', ethnicity: 'white' },
+    { file: 'profile_pics/Black male.png', label: 'Black Male', ethnicity: 'black' },
+    { file: 'profile_pics/Asian male.png', label: 'Asian Male', ethnicity: 'asian' },
+    { file: 'profile_pics/Mexican male.png', label: 'Hispanic Male', ethnicity: 'mexican' },
+    { file: 'profile_pics/Old Male.png', label: 'Old Male', ethnicity: 'unknown' },
+    { file: 'profile_pics/Stylized White Male.png', label: 'Stylized White Male', ethnicity: 'white' },
+    { file: 'profile_pics/Stylized Black Male.png', label: 'Stylized Black Male', ethnicity: 'black' },
+    { file: 'profile_pics/Stylized Asian Male.png', label: 'Stylized Asian Male', ethnicity: 'asian' },
+    { file: 'profile_pics/Stylized Hispanic Male.png', label: 'Stylized Hispanic Male', ethnicity: 'hispanic' },
+    { file: 'profile_pics/Brooding 1920s Gangster Portrait.png', label: 'Brooding 1920s Gangster', ethnicity: 'unknown' },
+    { file: 'profile_pics/Noir Gangster Portrait with Cigar.png', label: 'Noir Gangster with Cigar', ethnicity: 'unknown' },
+    { file: 'profile_pics/Noir Newsboy Cap Portrait.png', label: 'Noir Newsboy', ethnicity: 'unknown' },
+    { file: 'profile_pics/Stern Mafia Boss Portrait.png', label: 'Stern Mafia Boss', ethnicity: 'unknown' },
+    { file: 'profile_pics/Stern Vintage Aristocrat Portrait.png', label: 'Stern Vintage Aristocrat', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Film-Noir Mobster Portrait.png', label: 'Vintage Film-Noir Mobster', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Gangster Portrait in Sepia Tones.png', label: 'Vintage Gangster in Sepia', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Gangster Portrait with Gold Cross.png', label: 'Vintage Gangster with Gold Cross', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Detective Portrait.png', label: 'Vintage Noir Detective', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Gangster Portrait (1).png', label: 'Vintage Noir Gangster', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Gangster Portrait.png', label: 'Vintage Noir Gangster', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Mafia Portrait.png', label: 'Vintage Noir Mafia', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Portrait of a Stern Gentleman.png', label: 'Vintage Noir Gentleman', ethnicity: 'unknown' },
+    { file: 'profile_pics/Weathered Flat-Cap Enforcer.png', label: 'Weathered Flat-Cap Enforcer', ethnicity: 'unknown' }
+  ],
+  female: [
+    { file: 'profile_pics/White female.png', label: 'White Female', ethnicity: 'white' },
+    { file: 'profile_pics/Black female.png', label: 'Black Female', ethnicity: 'black' },
+    { file: 'profile_pics/Asian female.png', label: 'Asian Female', ethnicity: 'asian' },
+    { file: 'profile_pics/Mexican female.png', label: 'Hispanic Female', ethnicity: 'mexican' },
+    { file: 'profile_pics/Old Female.png', label: 'Old Female', ethnicity: 'unknown' },
+    { file: 'profile_pics/Stylized White Female.png', label: 'Stylized White Female', ethnicity: 'white' },
+    { file: 'profile_pics/Stylized Black Female.png', label: 'Stylized Black Female', ethnicity: 'black' },
+    { file: 'profile_pics/Stylized Asian Female.png', label: 'Stylized Asian Female', ethnicity: 'asian' },
+    { file: 'profile_pics/Stylized Hispanic Female.png', label: 'Stylized Hispanic Female', ethnicity: 'hispanic' },
+    { file: 'profile_pics/Film-Noir Femme Fatale Portrait.png', label: 'Film-Noir Femme Fatale', ethnicity: 'unknown' },
+    { file: 'profile_pics/Noir Glamour_ The Crimson Rose Diva.png', label: 'The Crimson Rose Diva', ethnicity: 'unknown' },
+    { file: 'profile_pics/Noir Latina Portrait with Red Rose.png', label: 'Noir Latina with Red Rose', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Femme Fatale.png', label: 'Vintage Noir Femme Fatale', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Glamour Portrait.png', label: 'Vintage Noir Glamour', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir Woman with a Red Rose.png', label: 'Vintage Noir Woman with a Red Rose', ethnicity: 'unknown' },
+    { file: 'profile_pics/Vintage Noir in Red.png', label: 'Vintage Noir in Red', ethnicity: 'unknown' }
+  ]
+};
+
+function setPortraitMetadata(portraitFile) {
+  for (const gender of ['male', 'female']) {
+    const option = PORTRAIT_OPTIONS[gender].find(portrait => portrait.file === portraitFile);
+    if (option) {
+      player.gender = gender;
+      player.ethnicity = option.ethnicity;
+      return;
+    }
+  }
+}
+
 // Function to load portrait grid in character creation -- organized by gender
 function loadPortraitGrid() {
   const portraitGrid = document.getElementById('portrait-grid');
   if (!portraitGrid) return;
 
-  const malePortraits = [
-    'profile_pics/White male.png',
-    'profile_pics/Black male.png',
-    'profile_pics/Asian male.png',
-    'profile_pics/Mexican male.png',
-    'profile_pics/Old Male.png',
-    'profile_pics/Stylized White Male.png',
-    'profile_pics/Stylized Black Male.png',
-    'profile_pics/Stylized Asian Male.png',
-    'profile_pics/Stylized Hispanic Male.png'
-  ];
-
-  const femalePortraits = [
-    'profile_pics/White female.png',
-    'profile_pics/Black female.png',
-    'profile_pics/Asian female.png',
-    'profile_pics/Mexican female.png',
-    'profile_pics/Old Female.png',
-    'profile_pics/Stylized White Female.png',
-    'profile_pics/Stylized Black Female.png',
-    'profile_pics/Stylized Asian Female.png',
-    'profile_pics/Stylized Hispanic Female.png'
-  ];
-
-  const renderGroup = (portraits) => portraits.map(portrait => `
-    <button class="portrait-option" data-portrait="${portrait}" onclick="selectPortraitForCreation('${portrait}')">
-      <img src="${portrait}" alt="Portrait" />
+  const renderGroup = (portraits) => portraits.map(({ file, label }) => `
+    <button class="portrait-option" data-portrait="${file}" onclick="selectPortraitForCreation('${file}')">
+      <img src="${file}" alt="${label}" />
     </button>
   `).join('');
 
   portraitGrid.innerHTML = `
     <div class="portrait-gender-section">
       <h3 style="grid-column: 1 / -1; color: #c0a062; font-size: 1.3em; margin: 10px 0 5px; border-bottom: 2px solid #c0a062; padding-bottom: 8px;">\uD83D\uDC68 Male</h3>
-      ${renderGroup(malePortraits)}
+      ${renderGroup(PORTRAIT_OPTIONS.male)}
     </div>
     <div class="portrait-gender-section">
       <h3 style="grid-column: 1 / -1; color: #e84393; font-size: 1.3em; margin: 20px 0 5px; border-bottom: 2px solid #e84393; padding-bottom: 8px;">\uD83D\uDC69 Female</h3>
-      ${renderGroup(femalePortraits)}
+      ${renderGroup(PORTRAIT_OPTIONS.female)}
     </div>
   `;
 }
@@ -17783,30 +17816,6 @@ function showChangePortraitScreen() {
   if (!_originalOptionsHTML) {
     _originalOptionsHTML = container.innerHTML;
   }
-
-  const malePortraits = [
-    { file: 'profile_pics/White male.png', label: 'White Male' },
-    { file: 'profile_pics/Black male.png', label: 'Black Male' },
-    { file: 'profile_pics/Asian male.png', label: 'Asian Male' },
-    { file: 'profile_pics/Mexican male.png', label: 'Hispanic Male' },
-    { file: 'profile_pics/Old Male.png', label: 'Old Male' },
-    { file: 'profile_pics/Stylized White Male.png', label: 'Stylized White Male' },
-    { file: 'profile_pics/Stylized Black Male.png', label: 'Stylized Black Male' },
-    { file: 'profile_pics/Stylized Asian Male.png', label: 'Stylized Asian Male' },
-    { file: 'profile_pics/Stylized Hispanic Male.png', label: 'Stylized Hispanic Male' }
-  ];
-
-  const femalePortraits = [
-    { file: 'profile_pics/White female.png', label: 'White Female' },
-    { file: 'profile_pics/Black female.png', label: 'Black Female' },
-    { file: 'profile_pics/Asian female.png', label: 'Asian Female' },
-    { file: 'profile_pics/Mexican female.png', label: 'Hispanic Female' },
-    { file: 'profile_pics/Old Female.png', label: 'Old Female' },
-    { file: 'profile_pics/Stylized White Female.png', label: 'Stylized White Female' },
-    { file: 'profile_pics/Stylized Black Female.png', label: 'Stylized Black Female' },
-    { file: 'profile_pics/Stylized Asian Female.png', label: 'Stylized Asian Female' },
-    { file: 'profile_pics/Stylized Hispanic Female.png', label: 'Stylized Hispanic Female' }
-  ];
 
   const renderBtn = (p) => {
     const isCurrent = player.portrait === p.file;
@@ -17839,7 +17848,7 @@ function showChangePortraitScreen() {
     <div class="content-card">
       <div class="portrait-selection-grid" style="max-height:none;">
         <div class="portrait-gender-section">
-          ${malePortraits.map(renderBtn).join('')}
+          ${PORTRAIT_OPTIONS.male.map(renderBtn).join('')}
         </div>
       </div>
     </div>
@@ -17848,7 +17857,7 @@ function showChangePortraitScreen() {
     <div class="content-card">
       <div class="portrait-selection-grid" style="max-height:none;">
         <div class="portrait-gender-section">
-          ${femalePortraits.map(renderBtn).join('')}
+          ${PORTRAIT_OPTIONS.female.map(renderBtn).join('')}
         </div>
       </div>
     </div>
@@ -17861,13 +17870,7 @@ function showChangePortraitScreen() {
 
 function applyPortraitChange(portraitFile) {
   player.portrait = portraitFile;
-
-  // Update gender/ ethnicity tracking from filename
-  const parts = portraitFile.replace('profile_pics/', '').toLowerCase().replace('.png', '').split(' ');
-  if (parts.length >= 2) {
-    player.ethnicity = parts[0];
-    player.gender = parts[1];
-  }
+  setPortraitMetadata(portraitFile);
 
   // Auto-save if there is an active slot
   if (typeof autoSave === 'function') autoSave();
@@ -17938,30 +17941,6 @@ function showPortraitSelection() {
   document.getElementById('character-creation-screen').style.display = 'none';
 
   // Create portrait selection HTML -- organized by Male / Female
-  const maleOptions = [
-    { file: 'profile_pics/White male.png', label: 'White Male' },
-    { file: 'profile_pics/Black male.png', label: 'Black Male' },
-    { file: 'profile_pics/Asian male.png', label: 'Asian Male' },
-    { file: 'profile_pics/Mexican male.png', label: 'Hispanic Male' },
-    { file: 'profile_pics/Old Male.png', label: 'Old Male' },
-    { file: 'profile_pics/Stylized White Male.png', label: 'Stylized White Male' },
-    { file: 'profile_pics/Stylized Black Male.png', label: 'Stylized Black Male' },
-    { file: 'profile_pics/Stylized Asian Male.png', label: 'Stylized Asian Male' },
-    { file: 'profile_pics/Stylized Hispanic Male.png', label: 'Stylized Hispanic Male' }
-  ];
-
-  const femaleOptions = [
-    { file: 'profile_pics/White female.png', label: 'White Female' },
-    { file: 'profile_pics/Black female.png', label: 'Black Female' },
-    { file: 'profile_pics/Asian female.png', label: 'Asian Female' },
-    { file: 'profile_pics/Mexican female.png', label: 'Hispanic Female' },
-    { file: 'profile_pics/Old Female.png', label: 'Old Female' },
-    { file: 'profile_pics/Stylized White Female.png', label: 'Stylized White Female' },
-    { file: 'profile_pics/Stylized Black Female.png', label: 'Stylized Black Female' },
-    { file: 'profile_pics/Stylized Asian Female.png', label: 'Stylized Asian Female' },
-    { file: 'profile_pics/Stylized Hispanic Female.png', label: 'Stylized Hispanic Female' }
-  ];
-
   const renderPortraitBtn = (option) => `
     <button onclick="selectPortrait('${option.file}', '${option.label}')"
         style="padding: 10px; border: 3px solid #6a5a3a; border-radius: 15px;
@@ -17985,12 +17964,12 @@ function showPortraitSelection() {
 
         <h2 style="color: #c0a062; font-size: 1.5em; margin: 20px 0 10px; border-bottom: 2px solid #c0a062; padding-bottom: 8px; text-align: left;"> Male</h2>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; margin: 0 0 30px 0;">
-          ${maleOptions.map(renderPortraitBtn).join('')}
+          ${PORTRAIT_OPTIONS.male.map(renderPortraitBtn).join('')}
         </div>
 
         <h2 style="color: #e84393; font-size: 1.5em; margin: 20px 0 10px; border-bottom: 2px solid #e84393; padding-bottom: 8px; text-align: left;"> Female</h2>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; margin: 0 0 30px 0;">
-          ${femaleOptions.map(renderPortraitBtn).join('')}
+          ${PORTRAIT_OPTIONS.female.map(renderPortraitBtn).join('')}
         </div>
 
         <button onclick="goBackToIntro()"
@@ -18012,17 +17991,7 @@ function showPortraitSelection() {
 function selectPortrait(portraitFile, _portraitLabel) {
   // Save portrait data
   player.portrait = portraitFile;
-
-  // Parse gender and ethnicity from filename for internal tracking only
-  const parts = portraitFile.replace('profile_pics/', '').toLowerCase().replace('.png', '').split(' ');
-  // Handle "Stylized White Male 1" (4 parts) vs "White Male 1" (3 parts)
-  if (parts.length >= 4 && parts[0] === 'stylized') {
-    player.ethnicity = parts[1];
-    player.gender = parts[2];
-  } else {
-    player.ethnicity = parts[0]; // white, black, asian, mexican
-    player.gender = parts[1]; // male, female
-  }
+  setPortraitMetadata(portraitFile);
 
   // Remove portrait selection screen
   const portraitScreen = document.getElementById('portrait-selection-screen');
@@ -26633,8 +26602,6 @@ window.respecSkillTree = respecSkillTree;
 window.getNotificationBadges = getNotificationBadges;
 window.renderNotificationBadges = renderNotificationBadges;
 window.checkNewAchievements = checkNewAchievements;
-
-
 
 
 
