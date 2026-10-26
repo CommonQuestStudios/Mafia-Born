@@ -215,11 +215,11 @@
                 </div>
             </div>
 
-            <button onclick="startGame()">Join the Family</button>
-            <button onclick="loadGameFromIntro()" style="background: linear-gradient(to bottom, #1a1a1a, #000); margin-left: 10px; border-color: #c0a062; color: #c0a062;">Resume Business</button>
-            <button onclick="forceNewGame()" style="background: linear-gradient(to bottom, #8b0000, #500000); margin-left: 10px; font-size: 12px; border-color: #ff0000; color: #fff;">Burn Records</button>
+            <button onclick="startGame()">Play Now &mdash; No Account Required</button>
+            <button onclick="loadGameFromIntro()" style="background: linear-gradient(to bottom, #1a1a1a, #000); margin-left: 10px; border-color: #c0a062; color: #c0a062;">Resume Saved Game</button>
+            <p style="margin:12px auto 0;color:#8a7a5a;font-size:0.9em;max-width:560px;">No email needed. Guest saves stay in this browser; create an account only for cloud backup and cross-device sync.</p>
             <div style="margin-top: 20px;">
-                <button id="intro-login-btn" onclick="showAuthModal()" style="background: linear-gradient(to bottom, #1a3a5c, #0d1f33); border-color: #4a9eff; color: #4a9eff; font-size: 14px; position: relative;" title="Checking server status...">Sign In</button>
+                <button id="intro-login-btn" onclick="openAccountOptions()" style="background: linear-gradient(to bottom, #1a3a5c, #0d1f33); border-color: #4a9eff; color: #4a9eff; font-size: 14px; position: relative;" title="Checking server status...">Account / Cloud Sync</button>
             </div>
             <div class="auth-status-indicator" style="margin-top: 10px; font-size: 0.85em;"></div>
             <div style="margin-top: 15px;">
@@ -695,7 +695,8 @@
             </div>
             <div class="section-header">Account</div>
             <div class="content-card">
-                <button onclick="showAuthModal()" style="border-color: #4a9eff; color: #4a9eff;">Sign In</button>
+                <button onclick="openAccountOptions()" style="border-color: #4a9eff; color: #4a9eff;">Account / Cloud Sync</button>
+                <p style="color:#8a7a5a;font-size:0.85em;margin:8px 0;">Create an account to back up your guest game and sync it across devices.</p>
                 <p class="auth-status-indicator" style="margin: 10px 0 0;"></p>
             </div>
             <div class="section-header">Personalization</div>

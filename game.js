@@ -74,6 +74,7 @@ window.MobileSystem = MobileSystem;
 window.updateMobileActionLog = updateMobileActionLog;
 window.initUIEvents = initUIEvents;
 window.showAuthModal = showAuthModal;
+window.openAccountOptions = openAccountOptions;
 window.getAuthState = getAuthState;
 window.updateAuthStatusUI = updateAuthStatusUI;
 
@@ -17566,24 +17567,97 @@ function resetPlayerForNewGame() {
   });
 }
 
-// Function to start the game (always creates a NEW profile)
-// Requires cloud login before proceeding.
+// Start immediately as a guest; accounts are optional and provide cloud sync.
 async function startGame() {
   const auth = getAuthState();
-  if (!auth.isLoggedIn) {
-    // Force the player to create an account or sign in first
-    showAuthModal({
-      required: true,
-      startOnRegister: true,
-      onAuth: async () => {
-        // After sign-in, check if they already have a save
-        await _startGameAfterAuth();
-      }
-    });
+  if (auth.isLoggedIn) {
+    await _startGameAfterAuth();
     return;
   }
-  // Already logged in -- check for existing save
-  await _startGameAfterAuth();
+
+  const save = getGuestSave();
+  if (save) {
+    const choice = await showGuestSaveChoice();
+    if (choice === 'resume') {
+      window.applyCloudSave(save);
+    } else if (choice === 'new') {
+      beginNewGuestGame();
+    }
+    return;
+  }
+
+  beginNewGuestGame();
+}
+
+function beginNewGuestGame() {
+  resetPlayerForNewGame();
+  showSimpleCharacterCreation();
+}
+
+function showGuestSaveChoice() {
+  return new Promise(resolve => {
+    const old = document.getElementById('guest-save-choice-overlay');
+    if (old) old.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'guest-save-choice-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);display:flex;align-items:center;justify-content:center;z-index:10000;padding:20px;box-sizing:border-box;';
+    overlay.innerHTML = `
+      <div style="max-width:460px;width:100%;background:#17140e;padding:32px;border-radius:14px;border:2px solid #c0a062;text-align:center;color:white;">
+        <h2 style="color:#c0a062;margin-top:0;">Welcome Back</h2>
+        <p style="color:#d4c4a0;">A game saved on this device was found.</p>
+        <button id="guest-resume-btn" style="display:block;width:100%;padding:14px;margin:12px 0;background:#183018;border:1px solid #8a9a6a;color:#d4c4a0;cursor:pointer;">Resume Game</button>
+        <button id="guest-new-btn" style="display:block;width:100%;padding:14px;margin:12px 0;background:#301818;border:1px solid #8b3a3a;color:#d4c4a0;cursor:pointer;">Start a New Game</button>
+        <button id="guest-cancel-btn" style="padding:10px 20px;background:#222;border:1px solid #666;color:#aaa;cursor:pointer;">Cancel</button>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const finish = choice => {
+      overlay.remove();
+      resolve(choice);
+    };
+    overlay.querySelector('#guest-resume-btn').onclick = () => finish('resume');
+    overlay.querySelector('#guest-new-btn').onclick = () => finish('new');
+    overlay.querySelector('#guest-cancel-btn').onclick = () => finish('cancel');
+  });
+}
+
+function openAccountOptions() {
+  const authAtOpen = getAuthState();
+  let guestSave = null;
+  let guestSaveIsLocal = true;
+  if (!authAtOpen.isLoggedIn) {
+    if (player && player.name) {
+      guestSave = window.createSaveDataForCloud();
+      guestSaveIsLocal = !!saveGuestGame(true);
+    } else {
+      guestSave = getGuestSave();
+    }
+  }
+
+  showAuthModal({
+    onAuth: async () => {
+      if (!authAtOpen.isLoggedIn && guestSave && getAuthState().isLoggedIn) {
+        try {
+          await cloudSave(guestSave);
+          try {
+            localStorage.removeItem(GUEST_SAVE_STORAGE_KEY);
+          } catch (error) {
+            console.warn('Cloud backup succeeded, but the local guest save could not be removed:', error);
+          }
+          showBriefNotification('Your guest game is now backed up to the cloud.', 'success');
+        } catch (error) {
+          console.error('Guest save cloud backup failed:', error);
+          showBriefNotification(
+            guestSaveIsLocal
+              ? 'Cloud backup failed. Your guest game is still saved on this device.'
+              : 'Cloud backup failed, and this browser could not save your guest game locally.',
+            'warning'
+          );
+        }
+      }
+    }
+  });
 }
 
 async function _startGameAfterAuth() {
@@ -17671,9 +17745,9 @@ async function showSimpleCharacterCreation() {
     resetPlayerForNewGame();
   }
 
-  // Use the auth username as the player name (already validated & unique at registration)
+  // Use the account name when signed in, or a temporary name for guests.
   const auth = getAuthState();
-  player.name = auth.username;
+  player.name = auth.username || `Rookie ${Math.floor(1000 + Math.random() * 9000)}`;
 
   // Initialize playtime tracking
   if (!player.startTime) {
@@ -17958,9 +18032,12 @@ function showPortraitSelection() {
     <div class="portrait-selection-overlay">
       <div class="portrait-selection-container">
         <h1 style="color: #8b3a3a; font-size: 3em; margin-bottom: 15px; text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.8);">
-          Choose Your Identity, ${player.name}
+          Choose Your Identity
         </h1>
         <p style="font-size: 1.2em; margin-bottom: 30px;">Select your appearance for the criminal underworld</p>
+        <label for="guest-character-name" style="display:block;color:#c0a062;margin-bottom:8px;">Character name</label>
+        <input id="guest-character-name" type="text" maxlength="20" autocomplete="nickname"
+          style="width:min(100%,360px);box-sizing:border-box;padding:12px;margin-bottom:20px;background:#17140e;border:1px solid #8a7a5a;border-radius:6px;color:#f5e6c8;font-size:1em;" />
 
         <h2 style="color: #c0a062; font-size: 1.5em; margin: 20px 0 10px; border-bottom: 2px solid #c0a062; padding-bottom: 8px; text-align: left;"> Male</h2>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; margin: 0 0 30px 0;">
@@ -17986,9 +18063,21 @@ function showPortraitSelection() {
   portraitScreen.id = 'portrait-selection-screen';
   portraitScreen.innerHTML = portraitHTML;
   document.body.appendChild(portraitScreen);
+  const characterNameInput = portraitScreen.querySelector('#guest-character-name');
+  characterNameInput.value = player.name || '';
+  characterNameInput.readOnly = getAuthState().isLoggedIn;
 }
 
 function selectPortrait(portraitFile, _portraitLabel) {
+  const characterNameInput = document.getElementById('guest-character-name');
+  const selectedName = characterNameInput ? characterNameInput.value.trim() : player.name;
+  if (!selectedName) {
+    showBriefNotification('Enter a character name to continue.', 'warning');
+    if (characterNameInput) characterNameInput.focus();
+    return;
+  }
+  player.name = selectedName.slice(0, 20);
+
   // Save portrait data
   player.portrait = portraitFile;
   setPortraitMetadata(portraitFile);
@@ -22665,16 +22754,25 @@ function showOptions() {
   if (fontPicker) fontPicker.innerHTML = buildFontPicker();
 }
 
-// Function to save the game (server-only)
+// Save to the cloud for signed-in players or on this device for guests.
 async function saveGame() {
-  await serverSave(false);
+  await persistGame(false);
 }
 
-// Function to load the saved game (server-only)
+// Load the saved game from the cloud or this device.
 async function loadGame() {
   const auth = getAuthState();
   if (!auth.isLoggedIn) {
-    showBriefNotification('Sign in to load your progress!', 'warning');
+    const save = getGuestSave();
+    if (!save) {
+      showBriefNotification('No game saved on this device yet.', 'warning');
+      return;
+    }
+    if (player && player.name && !await ui.confirm('Loading will replace your current game with the game saved on this device. Continue?')) {
+      return;
+    }
+    window.applyCloudSave(save);
+    showBriefNotification(`Welcome back, ${save.playerName || player.name}!`, 'success');
     return;
   }
 
@@ -22686,11 +22784,17 @@ async function loadGame() {
   await serverLoad();
 }
 
-// Load game from the intro screen (server-only)
+// Load game from the intro screen.
 async function loadGameFromIntro() {
   const auth = getAuthState();
   if (!auth.isLoggedIn) {
-    showBriefNotification('Sign in first to resume your game!', 'warning');
+    const save = getGuestSave();
+    if (save) {
+      window.applyCloudSave(save);
+      showBriefNotification(`Welcome back, ${save.playerName || player.name}!`, 'success');
+    } else {
+      showBriefNotification('No game saved on this device yet. Choose Play Now to begin.', 'warning');
+    }
     return;
   }
 
@@ -23943,12 +24047,57 @@ function buildEmpireOverviewHTML() {
 
 // ==================== SAVE SYSTEM ====================
 
-// Save system configuration (server-only)
+// Save system configuration
 const SAVE_SYSTEM = {
   autoSaveInterval: 60000, // 60 seconds
   autoSaveEnabled: true,
   lastAutoSave: 0
 };
+const GUEST_SAVE_STORAGE_KEY = 'mafiaBornGuestSave';
+
+function getGuestSave() {
+  let rawSave;
+  try {
+    rawSave = localStorage.getItem(GUEST_SAVE_STORAGE_KEY);
+  } catch (error) {
+    console.error('Could not access the guest save on this device:', error);
+    showBriefNotification('This browser could not access local saves. Check your privacy or storage settings.', 'warning');
+    return null;
+  }
+  if (!rawSave) return null;
+
+  try {
+    const save = JSON.parse(rawSave);
+    if (!save || !save.data || !validateSaveData(save.data)) {
+      throw new Error('Guest save data is corrupted or incompatible.');
+    }
+    return save;
+  } catch (error) {
+    console.error('Could not read guest save:', error);
+    showBriefNotification('The game saved on this device could not be read.', 'danger');
+    return null;
+  }
+}
+
+function saveGuestGame(isAutoSave = false) {
+  if (!player || !player.name || player.name.trim() === '') return null;
+  const saveEntry = window.createSaveDataForCloud();
+  try {
+    localStorage.setItem(GUEST_SAVE_STORAGE_KEY, JSON.stringify(saveEntry));
+    SAVE_SYSTEM.lastAutoSave = Date.now();
+    if (!isAutoSave) {
+      logAction('Progress saved on this device.');
+      showBriefNotification('Game saved on this device.', 'success');
+    }
+    return saveEntry;
+  } catch (error) {
+    console.error('Guest save failed:', error);
+    if (!isAutoSave) {
+      showBriefNotification('Could not save on this device. Check available browser storage.', 'danger');
+    }
+    return null;
+  }
+}
 
 // Initialize save system
 function initializeSaveSystem() {
@@ -23979,7 +24128,7 @@ function startAutoSave() {
     clearInterval(autoSaveIntervalId);
   }
   autoSaveIntervalId = setInterval(() => {
-    if (SAVE_SYSTEM.autoSaveEnabled && player && player.name) {
+    if (SAVE_SYSTEM.autoSaveEnabled && gameplayActive && player && player.name) {
       autoSave();
     }
   }, SAVE_SYSTEM.autoSaveInterval);
@@ -23987,7 +24136,7 @@ function startAutoSave() {
 
 function autoSave() {
   try {
-    serverSave(true);
+    persistGame(true);
   } catch (error) {
     console.error('Auto-save failed:', error);
   }
@@ -23995,10 +24144,14 @@ function autoSave() {
 
 function emergencySave() {
   try {
-    if (player && player.name) {
+    if (gameplayActive && player && player.name) {
       const saveEntry = window.createSaveDataForCloud();
       if (saveEntry) {
-        emergencyCloudSave(saveEntry);
+        if (getAuthState().isLoggedIn) {
+          emergencyCloudSave(saveEntry);
+        } else {
+          localStorage.setItem(GUEST_SAVE_STORAGE_KEY, JSON.stringify(saveEntry));
+        }
       }
     }
   } catch (error) {
@@ -24006,8 +24159,7 @@ function emergencySave() {
   }
 }
 
-// Server-only save function
-async function serverSave(isAutoSave = false) {
+async function persistGame(isAutoSave = false) {
   try {
     if (!player || !player.name || player.name.trim() === '') {
       if (!isAutoSave) {
@@ -24018,10 +24170,7 @@ async function serverSave(isAutoSave = false) {
 
     const auth = getAuthState();
     if (!auth.isLoggedIn) {
-      if (!isAutoSave) {
-        showBriefNotification('Sign in to save your progress!', 'warning');
-      }
-      return null;
+      return saveGuestGame(isAutoSave);
     }
 
     const saveEntry = window.createSaveDataForCloud();
@@ -26602,7 +26751,3 @@ window.respecSkillTree = respecSkillTree;
 window.getNotificationBadges = getNotificationBadges;
 window.renderNotificationBadges = renderNotificationBadges;
 window.checkNewAchievements = checkNewAchievements;
-
-
-
-

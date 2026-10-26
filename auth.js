@@ -579,8 +579,8 @@ export function updateAuthStatusUI() {
             introLoginBtn.textContent = ` ${authUsername}`;
             introLoginBtn.title = 'Manage cloud account';
         } else {
-            introLoginBtn.textContent = 'Sign In';
-            introLoginBtn.title = 'Sign in to save across devices';
+            introLoginBtn.textContent = 'Account / Cloud Sync';
+            introLoginBtn.title = 'Optional: create an account to back up and sync your game';
         }
     }
 }
