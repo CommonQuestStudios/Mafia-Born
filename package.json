@@ -1,6 +1,6 @@
 {
   "name": "mafia-born-multiplayer",
-  "version": "1.43.5",
+  "version": "1.44.0",
   "description": "Mafia Born - Multiplayer criminal empire building game",
   "main": "server.js",
   "scripts": {

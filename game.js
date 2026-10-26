@@ -19088,7 +19088,7 @@ function startGameAfterIntro() {
 
 // ==================== VERSION UPDATE SYSTEM ====================
 
-const CURRENT_VERSION = '1.43.5';
+const CURRENT_VERSION = '1.44.0';
 
 // Compare two semver strings. Returns true if `server` is strictly newer than `local`.
 function isNewerVersion(server, local) {
@@ -19103,6 +19103,19 @@ function isNewerVersion(server, local) {
 }
 
 const VERSION_UPDATES = {
+  '1.44.0': {
+    title: 'Play Instantly, Pick Your Name Later',
+    date: 'October 2026',
+    changes: [
+      'Jump straight in -- no account needed to start playing. Guest progress saves on your device',
+      'Guests play under an assigned "Guest #####" name; create a free account any time to choose your own name and keep your progress',
+      'New: Change Name -- account holders can buy a new name from Settings or the Identity card on Player Stats ($100,000, doubling each time, once every 7 days)',
+      'Names are now unique -- the name checker stops anyone from taking a name another player already uses',
+      'Renaming updates your turf, crew, bounties, chats and leaderboard spots across the online world',
+      'New character portraits and item images',
+      'Help guide and tutorials updated for guest play, accounts and name changes'
+    ]
+  },
   '1.35.9': {
     title: 'Dead Code Sweep',
     date: 'March 2026',

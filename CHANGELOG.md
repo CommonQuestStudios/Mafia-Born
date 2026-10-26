@@ -4,6 +4,23 @@ All notable changes to From Dusk To Don (Mafia Born) will be documented in this 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## [1.44.0] - 2026-10-26
+### Added
+- Guest play: start a game without an account; guest progress saves locally and carries over when creating an account
+- Assigned "Guest #####" names for guests; custom names require a free account
+- Paid name changes for account holders ($100,000, doubling each change, once every 7 days) from Settings and the Player Stats Identity card
+- Server-side name checker with a unique index so no two accounts can share a character name; `/api/name-change` endpoints
+- Renames update territories, crews, bounties, private chats and leaderboard entries in the online world
+- New character portraits and item images
+- GitHub Actions auto-deploy of the static site to cPanel via FTP
+
+### Changed
+- Account character names are now server-authoritative (cloud saves and multiplayer use the account's name)
+- Help guide, tutorials and Settings text explain guest names, accounts and name changes
+
+### Security
+- `.htaccess` blocks public access to backend files, data files, docs and tooling folders on cPanel
+
 ## [1.43.5] - 2025-07-17
 ### Fixed
 - Fixed corrupted Unicode character in territory display element (index.html)
