@@ -14,3 +14,15 @@
     Header set Cache-Control "public, max-age=604800, immutable"
   </FilesMatch>
 </IfModule>
+
+# Backend code, configs, data and docs run on Render and must never be served from this site
+<FilesMatch "^(server|server-sanity-test|db|userDB|worldPersistence|version-bump|config\.example|config)\.js$">
+  Require all denied
+</FilesMatch>
+<FilesMatch "\.(json|md|yaml|yml|bat|ps1|service|env|log)$|^Procfile$">
+  Require all denied
+</FilesMatch>
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule (^|/)(node_modules|docs_archive|\.git|\.github|\.vscode)(/|$) - [F,L]
+</IfModule>
