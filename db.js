@@ -31,6 +31,8 @@ async function connect() {
     const users = db.collection('users');
     await users.createIndex({ username: 1 }, { unique: true });
     await users.createIndex({ 'saveData.playerName': 1 }, { sparse: true });
+    // Character names are unique across accounts (case-insensitive key)
+    await users.createIndex({ characterNameKey: 1 }, { unique: true, sparse: true });
 
     return db;
 }

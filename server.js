@@ -383,8 +383,14 @@ const server = http.createServer(async (req, res) => {
                 const validated = validateAndBuildSaveEntry(body);
                 if (!validated.ok) return json(400, { error: validated.error });
                 const { saveEntry } = validated;
+                // Account saves always carry the account's authoritative character name
+                const characterName = await userDB.ensureCharacterName(username);
+                if (characterName) {
+                    saveEntry.playerName = characterName;
+                    accountNameCache.set(username, characterName);
+                }
                 await userDB.setUserSave(username, saveEntry);
-                return json(200, { ok: true, saveDate: saveEntry.saveDate });
+                return json(200, { ok: true, saveDate: saveEntry.saveDate, playerName: saveEntry.playerName });
             }
 
             // ── GET /api/load ──────────────────────────────
@@ -393,7 +399,43 @@ const server = http.createServer(async (req, res) => {
                 if (!username) return json(401, { error: 'Not authenticated' });
                 const save = await userDB.getUserSave(username);
                 if (!save) return json(404, { error: 'No cloud save found' });
+                const characterName = await userDB.ensureCharacterName(username);
+                if (characterName) save.playerName = characterName;
                 return json(200, save);
+            }
+
+            // ── GET /api/name-change ───────────────────────
+            if (urlPath === '/api/name-change' && req.method === 'GET') {
+                const username = userDB.validateToken(getToken());
+                if (!username) return json(401, { error: 'Create an account to change your name.' });
+                const info = await userDB.getNameChangeInfo(username);
+                if (!info) return json(404, { error: 'Account not found' });
+                accountNameCache.set(username, info.name);
+                return json(200, info);
+            }
+
+            // ── POST /api/name-change ──────────────────────
+            if (urlPath === '/api/name-change' && req.method === 'POST') {
+                const username = userDB.validateToken(getToken());
+                if (!username) return json(401, { error: 'Create an account to change your name.' });
+                const clientIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+                if (!checkAuthRateLimit(clientIP)) return json(429, { error: 'Too many attempts. Please wait a minute.' });
+                const body = await readBody();
+                const newName = normalizeCustomName(body.name);
+                const invalid = validateCustomName(newName);
+                if (invalid) return json(400, { error: invalid });
+                const onlineConflict = Array.from(gameState.players.values()).some(p =>
+                    p.name.toLowerCase() === newName.toLowerCase() &&
+                    sessions.get(clients.get(p.id))?.authenticatedUser !== username);
+                if (onlineConflict) return json(409, { error: 'That name is already taken.' });
+                const result = await userDB.changeCharacterName(username, newName, Number(body.expectedPrice));
+                if (!result.ok) {
+                    const { status, ok: _ok, ...rest } = result;
+                    return json(status || 400, rest);
+                }
+                accountNameCache.set(username, result.name);
+                renameOnlineAccount(username, result.oldName, result.name);
+                return json(200, result);
             }
 
             // ── DELETE /api/save ────────────────────────────
@@ -425,7 +467,8 @@ const server = http.createServer(async (req, res) => {
                 const token = getToken();
                 const caller = token ? userDB.validateToken(token) : null;
                 const taken = await userDB.isPlayerNameTaken(name.trim(), caller);
-                return json(200, { taken });
+                const error = validateCustomName(normalizeCustomName(name));
+                return json(200, { taken, valid: !error, error });
             }
 
             // ── DELETE /api/account ────────────────────────
@@ -435,6 +478,7 @@ const server = http.createServer(async (req, res) => {
                 if (!username) return json(401, { error: 'Not authenticated' });
                 await userDB.destroySession(token);
                 await userDB.deleteUser(username);
+                accountNameCache.delete(username);
                 return json(200, { ok: true });
             }
 
@@ -1103,8 +1147,132 @@ function generateGuestName() {
 function resolvePlayerName(rawName, authenticatedUser) {
     const name = sanitizePlayerName(rawName);
     const looksLikeGuest = /^guest\b/i.test(name);
-    if (authenticatedUser) return looksLikeGuest ? sanitizePlayerName(authenticatedUser) : name;
+    if (authenticatedUser) {
+        // Account names are server-authoritative once known; only paid name changes update them
+        const accountName = accountNameCache.get(authenticatedUser);
+        if (accountName) return sanitizePlayerName(accountName);
+        return looksLikeGuest ? sanitizePlayerName(authenticatedUser) : name;
+    }
     return GUEST_NAME_PATTERN.test(name) ? name : generateGuestName();
+}
+
+// username (lowercase) -> authoritative character name
+const accountNameCache = new Map();
+
+function normalizeCustomName(raw) {
+    return String(raw || '').trim().replace(/\s+/g, ' ');
+}
+
+// Rules for names chosen through a paid name change. Returns an error message or null.
+function validateCustomName(name) {
+    if (name.length < 3 || name.length > 20) return 'Name must be 3-20 characters.';
+    if (!/^[A-Za-z0-9][A-Za-z0-9 _'.-]*$/.test(name)) {
+        return 'Use letters, numbers, spaces, and _ \' . - only, starting with a letter or number.';
+    }
+    if (/^guest(?![a-z])/i.test(name)) return 'Names starting with "Guest" are reserved for guest players.';
+    if (/^(anonymous|player)_/i.test(name)) return 'That name format is reserved.';
+    if (isReservedName(name)) return 'That name is reserved.';
+    if (isProfane(name)) return 'That name is not allowed.';
+    return null;
+}
+
+// Fields in world state that hold player names (exact-match replacement on rename)
+const PLAYER_NAME_FIELD = /^(player|leader|target|targetPlayer|seller|buyer|host|guest|topDon|poster|helper|helperPlayer|killer|victim|attacker|defender|sender|recipient|winner|loser|from|to)Name$|^(owner|leader|controlledBy|residents|members|officers|blockedPlayers|friends|friendRequests)$/;
+
+function renamePlayerReferences(oldName, newName) {
+    const seen = new Set();
+    const visit = (node) => {
+        if (!node || typeof node !== 'object' || seen.has(node)) return;
+        seen.add(node);
+        if (node instanceof Map) {
+            for (const value of node.values()) visit(value);
+            return;
+        }
+        if (Array.isArray(node)) {
+            node.forEach(visit);
+            return;
+        }
+        for (const [field, value] of Object.entries(node)) {
+            if (typeof value === 'string') {
+                // Member entries look like { playerId, name, ... }
+                const isNameField = PLAYER_NAME_FIELD.test(field) || (field === 'name' && 'playerId' in node);
+                if (isNameField && value === oldName) node[field] = newName;
+            } else if (Array.isArray(value) && PLAYER_NAME_FIELD.test(field)) {
+                for (let i = 0; i < value.length; i++) {
+                    if (value[i] === oldName) value[i] = newName;
+                }
+                visit(value);
+            } else {
+                visit(value);
+            }
+        }
+    };
+    visit(gameState);
+    visit(persistedLeaderboard);
+
+    // Leaderboard rows identify players by a plain `name` field
+    const renameRows = (node) => {
+        if (Array.isArray(node)) {
+            node.forEach(row => { if (row && row.name === oldName) row.name = newName; });
+        } else if (node && typeof node === 'object') {
+            Object.values(node).forEach(renameRows);
+        }
+    };
+    renameRows(persistedLeaderboard);
+
+    const newspapers = gameState.offlineDeathNewspapers.get(oldName);
+    if (newspapers) {
+        gameState.offlineDeathNewspapers.delete(oldName);
+        const existing = gameState.offlineDeathNewspapers.get(newName) || [];
+        gameState.offlineDeathNewspapers.set(newName, existing.concat(newspapers));
+    }
+    for (const [pairKey, messages] of Array.from(gameState.privateChats.entries())) {
+        const names = pairKey.split('|');
+        if (!names.includes(oldName)) continue;
+        const renamedKey = names.map(n => (n === oldName ? newName : n)).sort().join('|');
+        gameState.privateChats.delete(pairKey);
+        const existing = gameState.privateChats.get(renamedKey) || [];
+        gameState.privateChats.set(renamedKey, existing.concat(messages).slice(-50));
+    }
+}
+
+function applyPlayerRename(clientId, desiredName) {
+    const player = gameState.players.get(clientId);
+    if (!player) return null;
+    const oldName = player.name;
+    if (oldName === desiredName) return oldName;
+    const takenByOther = Array.from(gameState.players.values()).some(p => p.id !== clientId && p.name === desiredName);
+    const newName = takenByOther ? ensureUniqueName(desiredName) : desiredName;
+
+    renamePlayerReferences(oldName, newName);
+    player.name = newName;
+    const ps = gameState.playerStates.get(clientId);
+    if (ps) ps.name = newName;
+    const ws = clients.get(clientId);
+    const sess = ws ? sessions.get(ws) : null;
+    if (sess) sess.playerName = newName;
+
+    console.log(` Player renamed: ${oldName} -> ${newName} (ID: ${clientId})`);
+    broadcastPlayerStates();
+    scheduleWorldSave();
+    return newName;
+}
+
+// Apply an account's new name to its live multiplayer session and world records
+function renameOnlineAccount(username, oldName, newName) {
+    let renamedLive = false;
+    for (const [ws, sess] of sessions.entries()) {
+        if (sess.authenticatedUser !== username || !sess.playerId) continue;
+        const applied = applyPlayerRename(sess.playerId, newName);
+        if (applied) {
+            renamedLive = true;
+            safeSend(ws, { type: 'name_enforced', name: applied });
+        }
+    }
+    if (!renamedLive && oldName && oldName !== newName) {
+        renamePlayerReferences(oldName, newName);
+        scheduleWorldSave();
+    }
 }
 
 console.log(' Mafia Born - Multiplayer Server Starting...');
@@ -1206,9 +1374,22 @@ function handleClientMessage(clientId, message, ws) {
     gameState.serverStats.messagesSent++;
     
     switch (message.type) {
-        case 'player_connect':
-            handlePlayerConnect(clientId, message, ws);
+        case 'player_connect': {
+            const token = typeof message.authToken === 'string' ? message.authToken : null;
+            const accountUser = token ? userDB.validateToken(token) : null;
+            if (accountUser && !accountNameCache.has(accountUser)) {
+                // Load the account's character name first so it can't be spoofed by the client
+                userDB.ensureCharacterName(accountUser)
+                    .then(name => { if (name) accountNameCache.set(accountUser, name); })
+                    .catch(err => console.error('ensureCharacterName failed:', err.message))
+                    .finally(() => {
+                        if (clients.get(clientId) === ws) handlePlayerConnect(clientId, message, ws);
+                    });
+            } else {
+                handlePlayerConnect(clientId, message, ws);
+            }
             break;
+        }
             
         case 'global_chat':
             handleGlobalChat(clientId, message);
@@ -1702,6 +1883,11 @@ function handlePlayerConnect(clientId, message, ws) {
         season: gameState.currentSeason,
         politics: sanitizePolitics()
     });
+
+    // Tell the client if the server assigned a different name than it asked for
+    if (finalName !== message.playerName) {
+        safeSend(ws, { type: 'name_enforced', name: finalName });
+    }
 
     // Send persisted crew/alliance/private chat history so chats survive logout
     {

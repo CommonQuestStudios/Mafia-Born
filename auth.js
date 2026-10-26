@@ -45,7 +45,12 @@ async function apiFetch(endpoint, options = {}) {
             body: options.body ? JSON.stringify(options.body) : undefined
         });
         const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        if (!resp.ok) {
+            const err = new Error(data.error || `HTTP ${resp.status}`);
+            err.status = resp.status;
+            err.data = data;
+            throw err;
+        }
         return data;
     } catch (err) {
         // If auth is expired/invalid, clear session
@@ -131,6 +136,20 @@ export async function cloudDeleteSave() {
 export async function checkPlayerName(name) {
     const data = await apiFetch(`/api/check-name?name=${encodeURIComponent(name)}`, { method: 'GET' });
     return data.taken; // true/false
+}
+
+// Full name check result: { taken, valid, error }
+export async function checkNameAvailability(name) {
+    return apiFetch(`/api/check-name?name=${encodeURIComponent(name)}`, { method: 'GET' });
+}
+
+// ── Paid name changes (accounts only) ──────────────────────────
+export async function getNameChangeInfo() {
+    return apiFetch('/api/name-change', { method: 'GET' });
+}
+
+export async function requestNameChange(name, expectedPrice) {
+    return apiFetch('/api/name-change', { method: 'POST', body: { name, expectedPrice } });
 }
 
 // ── Token management ───────────────────────────────────────────

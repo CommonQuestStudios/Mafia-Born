@@ -113,6 +113,10 @@ async function createUser(username, password) {
     if (!/^[a-zA-Z0-9_]+$/.test(username)) return { ok: false, error: 'Username can only contain letters, numbers, and underscores' };
 
     const key = username.toLowerCase();
+    // A new login name can't match another account's character name
+    if (await users().findOne({ characterNameKey: key }, { projection: { _id: 1 } })) {
+        return { ok: false, error: 'Username already taken' };
+    }
     const doc = {
         username: key,         // lookup key (lowercase)
         displayName: username, // preserve original casing
@@ -196,19 +200,138 @@ async function getUserInfo(username) {
     };
 }
 
-// Check if a character/player name is already used by any account's save data.
+// Check if a character/player name is already used by another account: its login
+// username, its chosen character name, or the name stored in its save data.
 // excludeUsername: skip this account (so a player re-saving with their own name passes).
 async function isPlayerNameTaken(name, excludeUsername) {
     if (!name) return false;
     const target = name.trim();
+    const key = characterNameKey(target);
     const filter = {
-        'saveData.playerName': { $regex: new RegExp(`^${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+        $or: [
+            { username: key },
+            { characterNameKey: key },
+            { 'saveData.playerName': { $regex: new RegExp(`^${target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+        ]
     };
     if (excludeUsername) {
         filter.username = { $ne: excludeUsername.toLowerCase() };
     }
     const match = await users().findOne(filter, { projection: { _id: 1 } });
     return !!match;
+}
+
+// ── Character names & paid name changes ────────────────────────
+const NAME_CHANGE_BASE_PRICE = 100000;
+const NAME_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const LOOKS_LIKE_GUEST = /^guest(?![a-z])/i;
+
+function characterNameKey(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Price doubles with every change: $100k, $200k, $400k, ...
+function nameChangePrice(changesMade) {
+    return NAME_CHANGE_BASE_PRICE * Math.pow(2, Math.min(Math.max(changesMade || 0, 0), 40));
+}
+
+// The account's authoritative character name. Accounts created before character names existed
+// adopt their last saved name (if still unique), otherwise their login name.
+async function ensureCharacterName(username) {
+    const key = username.toLowerCase();
+    const user = await users().findOne(
+        { username: key },
+        { projection: { displayName: 1, characterName: 1, 'saveData.playerName': 1 } }
+    );
+    if (!user) return null;
+    if (user.characterName) return user.characterName;
+
+    const candidates = [];
+    const legacy = user.saveData && typeof user.saveData.playerName === 'string'
+        ? user.saveData.playerName.trim().replace(/\s+/g, ' ')
+        : '';
+    if (legacy && legacy.length <= 20 && !LOOKS_LIKE_GUEST.test(legacy) && !(await isPlayerNameTaken(legacy, key))) {
+        candidates.push(legacy);
+    }
+    candidates.push(user.displayName);
+
+    for (const name of candidates) {
+        try {
+            await users().updateOne(
+                { username: key, characterName: { $exists: false } },
+                { $set: { characterName: name, characterNameKey: characterNameKey(name) } }
+            );
+            break;
+        } catch (err) {
+            if (err.code !== 11000) throw err;
+        }
+    }
+    const fresh = await users().findOne({ username: key }, { projection: { characterName: 1 } });
+    return (fresh && fresh.characterName) || user.displayName;
+}
+
+async function getNameChangeInfo(username) {
+    const name = await ensureCharacterName(username);
+    if (!name) return null;
+    const user = await users().findOne(
+        { username: username.toLowerCase() },
+        { projection: { nameChanges: 1, lastNameChangeAt: 1 } }
+    );
+    const nameChanges = (user && user.nameChanges) || 0;
+    const lastNameChangeAt = (user && user.lastNameChangeAt) || 0;
+    return {
+        name,
+        nameChanges,
+        price: nameChangePrice(nameChanges),
+        lastNameChangeAt,
+        availableAt: lastNameChangeAt ? lastNameChangeAt + NAME_CHANGE_COOLDOWN_MS : 0
+    };
+}
+
+// newName must already be validated for format/profanity by the caller.
+async function changeCharacterName(username, newName, expectedPrice) {
+    const key = username.toLowerCase();
+    const info = await getNameChangeInfo(username);
+    if (!info) return { ok: false, status: 404, error: 'Account not found' };
+    if (info.availableAt > Date.now()) {
+        return { ok: false, status: 429, error: 'You can only change your name once every 7 days.', availableAt: info.availableAt };
+    }
+    if (expectedPrice !== info.price) {
+        return { ok: false, status: 409, error: 'The name change price has changed. Please try again.', price: info.price };
+    }
+    if (newName === info.name) return { ok: false, status: 400, error: 'That is already your name.' };
+    if (await isPlayerNameTaken(newName, key)) return { ok: false, status: 409, error: 'That name is already taken.' };
+
+    const now = Date.now();
+    // Matching on the previous change time makes concurrent requests charge only once
+    const filter = info.lastNameChangeAt
+        ? { username: key, lastNameChangeAt: info.lastNameChangeAt }
+        : { username: key, lastNameChangeAt: { $exists: false } };
+    let result;
+    try {
+        result = await users().updateOne(filter, {
+            $set: { characterName: newName, characterNameKey: characterNameKey(newName), lastNameChangeAt: now },
+            $inc: { nameChanges: 1 }
+        });
+    } catch (err) {
+        if (err.code === 11000) return { ok: false, status: 409, error: 'That name is already taken.' };
+        throw err;
+    }
+    if (result.matchedCount === 0) {
+        return { ok: false, status: 409, error: 'Your name was just changed. Please refresh and try again.' };
+    }
+    await users().updateOne(
+        { username: key, saveData: { $type: 'object' } },
+        { $set: { 'saveData.playerName': newName } }
+    );
+    return {
+        ok: true,
+        name: newName,
+        oldName: info.name,
+        price: info.price,
+        nextPrice: nameChangePrice(info.nameChanges + 1),
+        availableAt: now + NAME_CHANGE_COOLDOWN_MS
+    };
 }
 
 // ── Initialization (called once after MongoDB connects) ────────
@@ -229,6 +352,10 @@ module.exports = {
     deleteUser,
     getUserInfo,
     isPlayerNameTaken,
+    ensureCharacterName,
+    getNameChangeInfo,
+    changeCharacterName,
+    NAME_CHANGE_COOLDOWN_MS,
     createSession,
     validateToken,
     destroySession

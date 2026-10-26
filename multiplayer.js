@@ -1299,6 +1299,17 @@ async function handleServerMessage(message) {
             document.body.appendChild(blockedOverlay);
             return;
 
+        case 'name_enforced':
+            // Server-assigned name (guest name, account name, or a paid name change)
+            if (typeof message.name === 'string' && message.name && window.player && window.player.name && window.player.name !== message.name) {
+                if (typeof window.onPlayerNameChanged === 'function') {
+                    window.onPlayerNameChanged(message.name);
+                } else {
+                    window.player.name = message.name;
+                }
+            }
+            break;
+
         case 'world_update':
             onlineWorldState.serverInfo.playerCount = message.playerCount;
             onlineWorldState.lastUpdate = new Date().toLocaleTimeString();

@@ -12,7 +12,7 @@ import { GameLogging } from './logging.js';
 import { ui, ModalSystem } from './ui-modal.js';
 import { MobileSystem, updateMobileActionLog } from './mobile-responsive.js';
 import { initUIEvents } from './ui-events.js';
-import { initAuth, showAuthModal, emergencyCloudSave, cloudDeleteSave, cloudSave, cloudLoad, deleteAccount, getAuthState, updateAuthStatusUI, checkAdmin } from './auth.js';
+import { initAuth, showAuthModal, emergencyCloudSave, cloudDeleteSave, cloudSave, cloudLoad, deleteAccount, getAuthState, updateAuthStatusUI, checkAdmin, checkNameAvailability, getNameChangeInfo, requestNameChange } from './auth.js';
 import {
   initCasino, getCasinoWins,
   showCasino, showCasinoTab, startBlackjack, bjDeal, bjHit, bjStand, bjDouble,
@@ -456,7 +456,7 @@ window.applyCloudSave = function (cloudEntry) {
         return;
     }
     applySaveData(saveData);
-    enforcePlayerNamePolicy();
+    enforcePlayerNamePolicy(cloudEntry.playerName);
     updateUI();
     applyUIToggles();
     applyStatBarPrefs();
@@ -9682,7 +9682,7 @@ const TUTORIAL_CONTENT = {
   settings: {
     title: 'Settings',
     sections: [
-      { heading: 'Save & Load', text: 'Save your game to multiple slots. Auto-save runs periodically. Create a free account under Account / Cloud Sync to sync across devices and replace your "Guest" name with a custom name.' },
+      { heading: 'Save & Load', text: 'Save your game to multiple slots. Auto-save runs periodically. Create a free account under Account / Cloud Sync to sync across devices and replace your "Guest" name with a custom name. Account holders can later buy a name change under Change Name.' },
       { heading: 'Customize', text: 'Customise your Quick Actions bar and mobile nav bar -- choose which screen shortcuts appear for fast access.' },
       { heading: 'UI Toggles', text: 'Show or hide the Quick Actions panel, mobile nav bar, and individual stats on the Status Bar. Tailor the HUD to your preference.' },
       { heading: 'Help & Tutorials', text: 'Tap the Help button for a full guide covering every game system. From Help you can also restart either tutorial -- "Learn as You Play" (screen-by-screen tips) or "Narrative Guide" (full step-by-step walkthrough) -- at any time.' },
@@ -10365,6 +10365,7 @@ const HELP_CATEGORIES = [
         </ul>
         <h4 style="color:#c0a062; margin:14px 0 6px;">Guest Names & Custom Names</h4>
         <p>Guests play under an assigned <strong>"Guest #####"</strong> name. Create a free account from Settings > Account / Cloud Sync to choose a custom name. Your guest progress is kept and moved to your account.</p>
+        <p><strong>Changing your name:</strong> Account holders can buy a new name from Settings > Change Name (or the Identity card on your Player Stats). The first change costs $100,000 clean cash, the price doubles each time, and you can change it once every 7 days. Names are unique, so you can't take a name someone else is using.</p>
         <h4 style="color:#c0a062; margin:14px 0 6px;">Loading</h4>
         <ul>
           <li>Go to Settings > Resume to pick any save slot and load it.</li>
@@ -15567,6 +15568,10 @@ function showPlayerStats() {
     <!-- Stats Tab (default) -->
     <div id="panel-stats">
       <h2 style="color:#d4af37;text-align:center;margin:10px 0 18px;">Overview</h2>
+      ${card('Identity', '', `${row('Name', escapeHTML(player.name || 'Unknown'), '#d4af37')}
+        <div style="text-align:right;margin-top:10px;">
+          <button onclick="showChangeNameScreen()" style="padding:6px 14px;font-size:0.9em;">Change Name</button>
+        </div>`)}
       ${card('Origin &amp; Perk', '', originHTML)}
       ${card('Core Stats', '', coreHTML)}
       ${card('Skill Trees', '', skillTreeOverviewHTML)}
@@ -17970,6 +17975,192 @@ function applyPortraitChange(portraitFile) {
 }
 
 window.showChangePortraitScreen = showChangePortraitScreen;
+
+// ---
+// CHANGE NAME (paid, accounts only)
+// ---
+const CUSTOM_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _'.-]*$/;
+
+function normalizeCustomName(raw) {
+  return String(raw || '').trim().replace(/\s+/g, ' ');
+}
+
+// Mirrors the server's format rules so players get instant feedback (server re-checks everything)
+function validateCustomNameLocally(name) {
+  if (name.length < 3 || name.length > 20) return 'Name must be 3-20 characters.';
+  if (!CUSTOM_NAME_PATTERN.test(name)) return 'Use letters, numbers, spaces, and _ \' . - only, starting with a letter or number.';
+  if (/^guest(?![a-z])/i.test(name)) return 'Names starting with "Guest" are reserved for guest players.';
+  if (/^(anonymous|player)_/i.test(name)) return 'That name format is reserved.';
+  if (name === player.name) return 'That is already your name.';
+  return null;
+}
+
+function onPlayerNameChanged(newName) {
+  if (typeof newName !== 'string' || !newName) return;
+  player.name = newName;
+  updateUI();
+}
+window.onPlayerNameChanged = onPlayerNameChanged;
+
+function renderNameChangePage(bodyHTML) {
+  const container = document.getElementById('options-screen');
+  container.innerHTML = `
+    <div class="page-header">
+      <h1><span class="icon"></span> Change Name</h1>
+      <div class="breadcrumb">
+        <a href="#" onclick="goBackToMainMenu(); return false;">SafeHouse</a>
+        <span class="separator">\u203A</span>
+        <a href="#" onclick="showOptions(); return false;">Settings</a>
+        <span class="separator">\u203A</span>
+        <span class="current">Name</span>
+      </div>
+    </div>
+    ${bodyHTML}
+    <div class="page-nav">
+      <button class="nav-btn-back" onclick="showOptions()">\u2190 Back to Settings</button>
+    </div>
+  `;
+}
+
+async function showChangeNameScreen() {
+  showOptions();
+  const container = document.getElementById('options-screen');
+  if (!_originalOptionsHTML) {
+    _originalOptionsHTML = container.innerHTML;
+  }
+
+  if (!getAuthState().isLoggedIn) {
+    renderNameChangePage(`
+      <div class="content-card" style="text-align:center;">
+        <p style="color:#d4c4a0;margin:0 0 10px;">You're playing as <strong style="color:#d4af37;">${escapeHTML(player.name || 'a guest')}</strong>.</p>
+        <p style="color:#8a7a5a;margin:0 0 15px;">Guests play under an assigned "Guest #####" name. Create a free account (it keeps your current progress) to pick your own name. After that, you can change it here for a fee.</p>
+        <button onclick="openAccountOptions()" style="border-color:#4a9eff;color:#4a9eff;">Create Account / Sign In</button>
+      </div>
+    `);
+    return;
+  }
+
+  renderNameChangePage('<div class="content-card" style="text-align:center;"><p style="color:#8a7a5a;margin:0;">Checking the records...</p></div>');
+
+  let info;
+  try {
+    info = await getNameChangeInfo();
+  } catch (error) {
+    renderNameChangePage(`
+      <div class="content-card" style="text-align:center;">
+        <p style="color:#8b3a3a;margin:0;">Couldn't reach the server: ${escapeHTML(error.message)}. Try again in a moment.</p>
+      </div>
+    `);
+    return;
+  }
+  if (info.name && info.name !== player.name) onPlayerNameChanged(info.name);
+
+  const onCooldown = info.availableAt && info.availableAt > Date.now();
+  const canAfford = (player.money || 0) >= info.price;
+  const priceLabel = `$${info.price.toLocaleString()}`;
+
+  let statusHTML = '';
+  if (onCooldown) {
+    statusHTML = `<p style="color:#c0a062;margin:10px 0 0;">You can change your name again on <strong>${new Date(info.availableAt).toLocaleString()}</strong>.</p>`;
+  } else if (!canAfford) {
+    statusHTML = `<p style="color:#8b3a3a;margin:10px 0 0;">You need ${priceLabel} in clean cash. You have $${(player.money || 0).toLocaleString()}.</p>`;
+  }
+
+  renderNameChangePage(`
+    <div class="content-card">
+      <p style="color:#8a7a5a;margin:0 0 6px;">Current name</p>
+      <p style="color:#d4af37;font-size:1.3em;font-weight:bold;margin:0 0 15px;">${escapeHTML(player.name)}</p>
+      <p style="color:#d4c4a0;margin:0 0 6px;">Price: <strong style="color:#8a9a6a;">${priceLabel}</strong> clean cash</p>
+      <p style="color:#8a7a5a;font-size:0.85em;margin:0;">The price doubles each time you change your name, and you can only change it once every 7 days. Names must be unique; nobody else can be using it.</p>
+      ${statusHTML}
+    </div>
+    <div class="content-card">
+      <label for="name-change-input" style="color:#d4c4a0;display:block;margin-bottom:6px;">New name</label>
+      <input id="name-change-input" type="text" maxlength="20" autocomplete="off" placeholder="3-20 characters"
+             style="width:100%;box-sizing:border-box;padding:10px;font-size:1em;" ${onCooldown || !canAfford ? 'disabled' : ''} />
+      <p id="name-change-status" style="min-height:1.2em;margin:8px 0 12px;font-size:0.9em;color:#8a7a5a;"></p>
+      <button id="name-change-confirm" disabled>Change Name for ${priceLabel}</button>
+    </div>
+  `);
+
+  const input = document.getElementById('name-change-input');
+  const statusEl = document.getElementById('name-change-status');
+  const confirmBtn = document.getElementById('name-change-confirm');
+  if (!input || onCooldown || !canAfford) return;
+
+  let checkTimer = null;
+  let checkSeq = 0;
+  let checkedName = null;
+  const setStatus = (text, color) => { statusEl.textContent = text; statusEl.style.color = color; };
+
+  input.addEventListener('input', () => {
+    clearTimeout(checkTimer);
+    checkedName = null;
+    confirmBtn.disabled = true;
+    const name = normalizeCustomName(input.value);
+    if (!name) { setStatus('', '#8a7a5a'); return; }
+    const localError = validateCustomNameLocally(name);
+    if (localError) { setStatus(localError, '#8b3a3a'); return; }
+    setStatus('Checking availability...', '#8a7a5a');
+    const seq = ++checkSeq;
+    checkTimer = setTimeout(async () => {
+      try {
+        const result = await checkNameAvailability(name);
+        if (seq !== checkSeq) return;
+        if (result.valid === false) {
+          setStatus(result.error || 'That name is not allowed.', '#8b3a3a');
+        } else if (result.taken) {
+          setStatus(`"${name}" is already taken.`, '#8b3a3a');
+        } else {
+          checkedName = name;
+          setStatus(`"${name}" is available!`, '#8a9a6a');
+          confirmBtn.disabled = false;
+        }
+      } catch (error) {
+        if (seq === checkSeq) setStatus('Could not check that name: ' + error.message, '#8b3a3a');
+      }
+    }, 400);
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    const name = checkedName;
+    if (!name) return;
+    if ((player.money || 0) < info.price) {
+      setStatus(`You need ${priceLabel} in clean cash.`, '#8b3a3a');
+      return;
+    }
+    const ok = await ui.confirm(
+      `Change your name from <strong>${escapeHTML(player.name)}</strong> to <strong>${escapeHTML(name)}</strong> for <strong>${priceLabel}</strong>?<br><br>You won't be able to change it again for 7 days.`,
+      'Change Name'
+    );
+    if (!ok) return;
+
+    confirmBtn.disabled = true;
+    input.disabled = true;
+    setStatus('Filing the paperwork...', '#8a7a5a');
+    try {
+      const result = await requestNameChange(name, info.price);
+      const oldName = player.name;
+      player.money = Math.max(0, (player.money || 0) - result.price);
+      onPlayerNameChanged(result.name);
+      await persistGame(true);
+      logAction(`You paid $${result.price.toLocaleString()} to bury the name ${oldName}. The streets now know you as ${result.name}.`);
+      showBriefNotification(`You're now known as ${result.name}!`, 'success');
+      showChangeNameScreen();
+    } catch (error) {
+      setStatus(error.message || 'Name change failed.', '#8b3a3a');
+      // Price/cooldown changed on the server: refresh the page with current values
+      if (error.status === 409 && error.data && error.data.price) {
+        setTimeout(() => showChangeNameScreen(), 1500);
+      } else {
+        input.disabled = false;
+      }
+    }
+  });
+
+  input.focus();
+}
+window.showChangeNameScreen = showChangeNameScreen;
 window.applyPortraitChange = applyPortraitChange;
 
 // Function to create character after all selections made
@@ -24081,10 +24272,15 @@ function isGuestName(name) {
 }
 
 // Guests always play under a guest name; accounts never keep one.
-function enforcePlayerNamePolicy() {
+// accountName: the server's authoritative character name for the signed-in account, if known.
+function enforcePlayerNamePolicy(accountName) {
   const auth = getAuthState();
   if (auth.isLoggedIn) {
-    if (!player.name || isGuestName(player.name)) player.name = auth.username;
+    if (typeof accountName === 'string' && accountName.trim() && !isGuestName(accountName)) {
+      player.name = accountName.trim();
+    } else if (!player.name || isGuestName(player.name)) {
+      player.name = auth.username;
+    }
   } else if (!isGuestName(player.name)) {
     player.name = generateGuestName();
   }
@@ -24209,8 +24405,12 @@ async function persistGame(isAutoSave = false) {
     }
 
     const saveEntry = window.createSaveDataForCloud();
-    await cloudSave(saveEntry);
+    const saveResult = await cloudSave(saveEntry);
     SAVE_SYSTEM.lastAutoSave = Date.now();
+    // The server keeps the account's character name authoritative
+    if (saveResult && saveResult.playerName && saveResult.playerName !== player.name) {
+      window.onPlayerNameChanged(saveResult.playerName);
+    }
 
     if (!isAutoSave) {
       logAction('Progress saved to the server.');
@@ -24245,7 +24445,7 @@ async function serverLoad() {
         return false;
       }
       applySaveData(save.data);
-      enforcePlayerNamePolicy();
+      enforcePlayerNamePolicy(save.playerName);
       updateUI();
       applyUIToggles();
       applyStatBarPrefs();
