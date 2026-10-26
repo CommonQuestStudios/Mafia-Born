@@ -9682,7 +9682,7 @@ const TUTORIAL_CONTENT = {
   settings: {
     title: 'Settings',
     sections: [
-      { heading: 'Save & Load', text: 'Save your game to multiple slots. Auto-save runs periodically. Sign in for Cloud Save to sync across devices.' },
+      { heading: 'Save & Load', text: 'Save your game to multiple slots. Auto-save runs periodically. Create a free account under Account / Cloud Sync to sync across devices and replace your "Guest" name with a custom name.' },
       { heading: 'Customize', text: 'Customise your Quick Actions bar and mobile nav bar -- choose which screen shortcuts appear for fast access.' },
       { heading: 'UI Toggles', text: 'Show or hide the Quick Actions panel, mobile nav bar, and individual stats on the Status Bar. Tailor the HUD to your preference.' },
       { heading: 'Help & Tutorials', text: 'Tap the Help button for a full guide covering every game system. From Help you can also restart either tutorial -- "Learn as You Play" (screen-by-screen tips) or "Narrative Guide" (full step-by-step walkthrough) -- at any time.' },
@@ -10033,6 +10033,7 @@ const NARRATIVE_GUIDE_STEPS = [
     title: 'Saving & Multiplayer',
     subtitle: 'Protect Your Progress',
     body: `<p><strong>Auto-Save</strong> runs every 60 seconds. <strong>Manual Save</strong> is available from Settings or the Quick Actions bar. <strong>Cloud Save</strong> lets you sync across browsers and devices by signing in.</p>
+      <p><strong>Your name:</strong> Guests play under an assigned <strong>"Guest #####"</strong> name. Create a free account from <strong>Settings > Account / Cloud Sync</strong> to choose a custom name -- your current progress comes with you.</p>
       <p><strong>Multiplayer features:</strong> World Chat, Player Market trading, PvP combat, and crime families are all available when connected online.</p>
       <p>Mafia Born works fully offline too -- multiplayer enhances the experience but isn't required.</p>
       <p style="color:#c0a062;"><strong>Tip:</strong> Save before risky activities! Use multiple save slots to keep backups at key points.</p>`,
@@ -10360,8 +10361,10 @@ const HELP_CATEGORIES = [
         <ul>
           <li><strong>Auto-Save</strong> -- Automatically saves to your current slot every 60 seconds.</li>
           <li><strong>Manual Save</strong> -- Save to any slot from Settings > Save Game, or use the "Save Records" button in Quick Actions.</li>
-          <li><strong>Cloud Save</strong> -- Sign in from Settings to sync your save across browsers and devices.</li>
+          <li><strong>Cloud Save</strong> -- Create a free account from Settings to sync your save across browsers and devices.</li>
         </ul>
+        <h4 style="color:#c0a062; margin:14px 0 6px;">Guest Names & Custom Names</h4>
+        <p>Guests play under an assigned <strong>"Guest #####"</strong> name. Create a free account from Settings > Account / Cloud Sync to choose a custom name. Your guest progress is kept and moved to your account.</p>
         <h4 style="color:#c0a062; margin:14px 0 6px;">Loading</h4>
         <ul>
           <li>Go to Settings > Resume to pick any save slot and load it.</li>
@@ -11183,7 +11186,7 @@ const HELP_CATEGORIES = [
         <p>Mafia Born works fully offline, but multiplayer features enhance the experience when connected.</p>
         <h4 style="color:#c0a062; margin:14px 0 6px;">Online Features</h4>
         <ul>
-          <li><strong>Cloud Save</strong> -- Sign in from Settings to sync your save across browsers and devices.</li>
+          <li><strong>Cloud Save & Custom Name</strong> -- Create a free account from Settings to sync your save across devices and play under a custom name instead of "Guest #####".</li>
           <li><strong>World Chat</strong> -- Chat with other players in real time. Global, crew, alliance, and direct message channels.</li>
           <li><strong>PvP Combat</strong> -- Attack other players to steal cash and gain respect. Climbs the leaderboard.</li>
           <li><strong>Player Market</strong> -- Buy and sell items with other real players via the Black Market's Player Market tab.</li>

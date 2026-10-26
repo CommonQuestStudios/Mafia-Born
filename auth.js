@@ -580,7 +580,7 @@ export function updateAuthStatusUI() {
             introLoginBtn.title = 'Manage cloud account';
         } else {
             introLoginBtn.textContent = 'Account / Cloud Sync';
-            introLoginBtn.title = 'Optional: create an account to back up and sync your game';
+            introLoginBtn.title = 'Optional: create a free account to pick a custom name and back up and sync your game';
         }
     }
 }
