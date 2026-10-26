@@ -1137,6 +1137,18 @@ function connectMultiplayerAfterGame() {
     }
 }
 
+// Re-identify with the server (e.g. after a guest signs in) so the account and its name are applied
+function reconnectOnlineWorld() {
+    const socket = onlineWorldState.socket;
+    if (!socket) return;
+    try { socket.onclose = null; } catch (_) { /* ignore */ }
+    try { socket.close(); } catch (_) { /* already closed */ }
+    onlineWorldState.socket = null;
+    onlineWorldState.isConnected = false;
+    onlineWorldState.connectionStatus = 'disconnected';
+    connectToOnlineWorld();
+}
+
 // Connect to the online world
 function connectToOnlineWorld() {
     if (onlineWorldState.isConnected) {
@@ -3261,7 +3273,11 @@ async function ensurePlayerNameForChat() {
         return name;
     }
     
-    // If no name available, prompt the user
+    // If no name available, guests get an assigned guest name; only accounts may choose one
+    if (!localStorage.getItem('mb_auth_token')) {
+        player.name = 'Guest ' + Math.floor(10000 + Math.random() * 90000);
+        return player.name;
+    }
     let userName = await window.ui.prompt('Enter your criminal name for multiplayer chat:', 'Criminal_' + Math.floor(Math.random() * 1000));
     if (userName && userName.trim() !== '') {
         // Sanitize: strip HTML tags, limit length, remove control characters

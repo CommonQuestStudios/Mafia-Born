@@ -1076,6 +1076,12 @@ function sanitizePlayerName(raw) {
 function ensureUniqueName(baseName) {
     const existing = new Set(Array.from(gameState.players.values()).map(p => p.name));
     if (!existing.has(baseName)) return baseName;
+    // Guest names stay in the "Guest #####" format instead of getting a suffix
+    if (GUEST_NAME_PATTERN.test(baseName)) {
+        let candidate = generateGuestName();
+        for (let i = 0; existing.has(candidate) && i < 1000; i++) candidate = generateGuestName();
+        return candidate;
+    }
     // Append suffix until unique
     let i = 2;
     let candidate = `${baseName}#${i}`;
@@ -1084,6 +1090,21 @@ function ensureUniqueName(baseName) {
         candidate = `${baseName}#${i}`;
     }
     return candidate;
+}
+
+// Guests (no valid auth token) must use an assigned "Guest #####" name; only accounts may pick names.
+// Keep in sync with GUEST_NAME_PATTERN in game.js.
+const GUEST_NAME_PATTERN = /^Guest \d{5}$/;
+
+function generateGuestName() {
+    return `Guest ${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
+function resolvePlayerName(rawName, authenticatedUser) {
+    const name = sanitizePlayerName(rawName);
+    const looksLikeGuest = /^guest\b/i.test(name);
+    if (authenticatedUser) return looksLikeGuest ? sanitizePlayerName(authenticatedUser) : name;
+    return GUEST_NAME_PATTERN.test(name) ? name : generateGuestName();
 }
 
 console.log(' Mafia Born - Multiplayer Server Starting...');
@@ -1517,9 +1538,6 @@ function handleClientMessage(clientId, message, ws) {
 
 // Player connection handler
 function handlePlayerConnect(clientId, message, ws) {
-    // Sanitize and enforce uniqueness on desired name
-    const desiredName = sanitizePlayerName(message.playerName || `Player_${clientId.slice(-4)}`);
-
     // ── Authenticated session enforcement ─────────────────────────
     // If the client sends an auth token, validate it and enforce
     // one-session-per-account: block if the account is already active
@@ -1527,6 +1545,9 @@ function handlePlayerConnect(clientId, message, ws) {
     const authToken = typeof message.authToken === 'string' ? message.authToken : null;
     const authenticatedUser = authToken ? userDB.validateToken(authToken) : null;
     const sess = sessions.get(ws);
+
+    // Sanitize the desired name and apply the guest naming rule
+    const desiredName = resolvePlayerName(message.playerName, authenticatedUser);
 
     if (authenticatedUser) {
         if (sess) sess.authenticatedUser = authenticatedUser;
@@ -2697,10 +2718,17 @@ function handlePlayerUpdate(clientId, message) {
     
     // Allow name correction (e.g. Anonymous_xxx -> real name after game loads)
     if (message.playerName && message.playerName.trim() !== '' && !message.playerName.startsWith('Anonymous_')) {
-        const newName = sanitizePlayerName(message.playerName);
-        if (newName && newName !== player.name) {
+        const sess = sessions.get(clients.get(clientId));
+        const authenticatedUser = sess && sess.authenticatedUser;
+        const requested = sanitizePlayerName(message.playerName);
+        // Guests may only switch to another guest name; anything else keeps their assigned name
+        const newName = (authenticatedUser || GUEST_NAME_PATTERN.test(requested))
+            ? resolvePlayerName(requested, authenticatedUser)
+            : player.name;
+        const guestNameTaken = GUEST_NAME_PATTERN.test(newName) &&
+            Array.from(gameState.players.values()).some(p => p.id !== clientId && p.name === newName);
+        if (newName && newName !== player.name && !guestNameTaken) {
             player.name = ensureUniqueName(newName);
-            const sess = sessions.get(clients.get(clientId));
             if (sess) sess.playerName = player.name;
             // Also update playerState name
             const ps = gameState.playerStates.get(clientId);

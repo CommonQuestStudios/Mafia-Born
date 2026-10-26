@@ -456,6 +456,7 @@ window.applyCloudSave = function (cloudEntry) {
         return;
     }
     applySaveData(saveData);
+    enforcePlayerNamePolicy();
     updateUI();
     applyUIToggles();
     applyStatBarPrefs();
@@ -17624,10 +17625,11 @@ function showGuestSaveChoice() {
 
 function openAccountOptions() {
   const authAtOpen = getAuthState();
+  const hasActiveGuestGame = !authAtOpen.isLoggedIn && !!(player && player.name);
   let guestSave = null;
   let guestSaveIsLocal = true;
   if (!authAtOpen.isLoggedIn) {
-    if (player && player.name) {
+    if (hasActiveGuestGame) {
       guestSave = window.createSaveDataForCloud();
       guestSaveIsLocal = !!saveGuestGame(true);
     } else {
@@ -17637,6 +17639,17 @@ function openAccountOptions() {
 
   showAuthModal({
     onAuth: async () => {
+      if (!authAtOpen.isLoggedIn && getAuthState().isLoggedIn) {
+        if (hasActiveGuestGame) {
+          // Signing up lets the player drop the assigned guest name for their account name.
+          enforcePlayerNamePolicy();
+          guestSave = window.createSaveDataForCloud();
+          updateUI();
+          if (typeof window.reconnectOnlineWorld === 'function') window.reconnectOnlineWorld();
+        } else if (guestSave) {
+          guestSave.playerName = getAuthState().username;
+        }
+      }
       if (!authAtOpen.isLoggedIn && guestSave && getAuthState().isLoggedIn) {
         try {
           await cloudSave(guestSave);
@@ -17747,7 +17760,7 @@ async function showSimpleCharacterCreation() {
 
   // Use the account name when signed in, or a temporary name for guests.
   const auth = getAuthState();
-  player.name = auth.username || `Rookie ${Math.floor(1000 + Math.random() * 9000)}`;
+  player.name = auth.username || generateGuestName();
 
   // Initialize playtime tracking
   if (!player.startTime) {
@@ -17961,7 +17974,7 @@ function createCharacter() {
   // player.name is already set from the auth username
   if (!player.name) {
     const auth = getAuthState();
-    player.name = auth.username || 'Unknown';
+    player.name = auth.username || generateGuestName();
   }
 
   if (!selectedPortraitFile) {
@@ -18035,9 +18048,7 @@ function showPortraitSelection() {
           Choose Your Identity
         </h1>
         <p style="font-size: 1.2em; margin-bottom: 30px;">Select your appearance for the criminal underworld</p>
-        <label for="guest-character-name" style="display:block;color:#c0a062;margin-bottom:8px;">Character name</label>
-        <input id="guest-character-name" type="text" maxlength="20" autocomplete="nickname"
-          style="width:min(100%,360px);box-sizing:border-box;padding:12px;margin-bottom:20px;background:#17140e;border:1px solid #8a7a5a;border-radius:6px;color:#f5e6c8;font-size:1em;" />
+        <div id="character-name-notice" style="max-width:480px;margin:0 auto 20px;padding:12px 16px;background:#17140e;border:1px solid #8a7a5a;border-radius:6px;color:#d4c4a0;"></div>
 
         <h2 style="color: #c0a062; font-size: 1.5em; margin: 20px 0 10px; border-bottom: 2px solid #c0a062; padding-bottom: 8px; text-align: left;"> Male</h2>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; margin: 0 0 30px 0;">
@@ -18063,20 +18074,21 @@ function showPortraitSelection() {
   portraitScreen.id = 'portrait-selection-screen';
   portraitScreen.innerHTML = portraitHTML;
   document.body.appendChild(portraitScreen);
-  const characterNameInput = portraitScreen.querySelector('#guest-character-name');
-  characterNameInput.value = player.name || '';
-  characterNameInput.readOnly = getAuthState().isLoggedIn;
+  const nameNotice = portraitScreen.querySelector('#character-name-notice');
+  const nameEl = document.createElement('strong');
+  nameEl.style.color = '#f5e6c8';
+  nameEl.textContent = player.name;
+  nameNotice.append('You will play as ', nameEl, '.');
+  if (!getAuthState().isLoggedIn) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:0.85em;color:#8a7a5a;margin-top:6px;';
+    hint.textContent = 'Want a custom name? Create a free account anytime from Settings → Account / Cloud Sync.';
+    nameNotice.append(hint);
+  }
 }
 
 function selectPortrait(portraitFile, _portraitLabel) {
-  const characterNameInput = document.getElementById('guest-character-name');
-  const selectedName = characterNameInput ? characterNameInput.value.trim() : player.name;
-  if (!selectedName) {
-    showBriefNotification('Enter a character name to continue.', 'warning');
-    if (characterNameInput) characterNameInput.focus();
-    return;
-  }
-  player.name = selectedName.slice(0, 20);
+  enforcePlayerNamePolicy();
 
   // Save portrait data
   player.portrait = portraitFile;
@@ -22772,7 +22784,7 @@ async function loadGame() {
       return;
     }
     window.applyCloudSave(save);
-    showBriefNotification(`Welcome back, ${save.playerName || player.name}!`, 'success');
+    showBriefNotification(`Welcome back, ${player.name}!`, 'success');
     return;
   }
 
@@ -22791,7 +22803,7 @@ async function loadGameFromIntro() {
     const save = getGuestSave();
     if (save) {
       window.applyCloudSave(save);
-      showBriefNotification(`Welcome back, ${save.playerName || player.name}!`, 'success');
+      showBriefNotification(`Welcome back, ${player.name}!`, 'success');
     } else {
       showBriefNotification('No game saved on this device yet. Choose Play Now to begin.', 'warning');
     }
@@ -24054,6 +24066,26 @@ const SAVE_SYSTEM = {
   lastAutoSave: 0
 };
 const GUEST_SAVE_STORAGE_KEY = 'mafiaBornGuestSave';
+// Guests get an assigned name; custom names require an account. Keep in sync with server.js.
+const GUEST_NAME_PATTERN = /^Guest \d{5}$/;
+
+function generateGuestName() {
+  return `Guest ${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
+function isGuestName(name) {
+  return typeof name === 'string' && GUEST_NAME_PATTERN.test(name);
+}
+
+// Guests always play under a guest name; accounts never keep one.
+function enforcePlayerNamePolicy() {
+  const auth = getAuthState();
+  if (auth.isLoggedIn) {
+    if (!player.name || isGuestName(player.name)) player.name = auth.username;
+  } else if (!isGuestName(player.name)) {
+    player.name = generateGuestName();
+  }
+}
 
 function getGuestSave() {
   let rawSave;
@@ -24210,6 +24242,7 @@ async function serverLoad() {
         return false;
       }
       applySaveData(save.data);
+      enforcePlayerNamePolicy();
       updateUI();
       applyUIToggles();
       applyStatBarPrefs();
