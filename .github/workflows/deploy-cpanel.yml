@@ -1,0 +1,63 @@
+name: Deploy to cPanel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cpanel
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FTP_CONFIGURED: ${{ secrets.FTP_SERVER != '' && secrets.FTP_USERNAME != '' && secrets.FTP_PASSWORD != '' }}
+    steps:
+      - name: Skip when FTP secrets are missing
+        if: env.FTP_CONFIGURED != 'true'
+        run: echo "::warning::FTP_SERVER, FTP_USERNAME and FTP_PASSWORD secrets are not set; skipping cPanel deploy."
+
+      - uses: actions/checkout@v4
+        if: env.FTP_CONFIGURED == 'true'
+
+      - name: Upload changed website files via FTP
+        if: env.FTP_CONFIGURED == 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          # cPanel FTP certificates are often issued for the host's server name, not the domain
+          security: loose
+          server-dir: ${{ vars.FTP_SERVER_DIR || '/public_html/' }}
+          # Only the static game is uploaded; backend code runs on Render and must never be public
+          exclude: |
+            **/.git*
+            **/.git*/**
+            .github/**
+            .vscode/**
+            node_modules/**
+            docs_archive/**
+            **/*.md
+            .eslintrc.json
+            .nojekyll
+            Procfile
+            render.yaml
+            package.json
+            package-lock.json
+            server.js
+            server-sanity-test.js
+            db.js
+            userDB.js
+            worldPersistence.js
+            version-bump.js
+            config.example.js
+            users.json
+            world-state.json
+            .env
+            *.bat
+            *.ps1
+            *.service
